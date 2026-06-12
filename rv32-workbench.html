@@ -1,0 +1,1987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RV32 Workbench — C → RISC-V emulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#14181f; --panel:#1a202a; --panel2:#161c25; --line:#2a3342; --line2:#222b38;
+  --text:#c9d2de; --dim:#67738a; --faint:#465063;
+  --amber:#f0b454; --amber-dim:#9a7434; --cyan:#62cfdd; --red:#e2685c; --green:#84c98a;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+  --disp:'Chakra Petch','IBM Plex Mono',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--text); font-family:var(--mono); font-size:13px;
+  display:flex; flex-direction:column; min-height:100vh;
+}
+/* ---------- header ---------- */
+header{
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel2);
+}
+.brand{font-family:var(--disp); font-weight:700; font-size:16px; letter-spacing:.14em; color:var(--text); white-space:nowrap}
+.brand b{color:var(--amber); font-weight:700}
+.statusbox{display:flex; align-items:center; gap:8px; padding:4px 10px; border:1px solid var(--line); border-radius:3px; background:var(--bg)}
+.led{width:9px;height:9px;border-radius:50%;background:var(--dim);box-shadow:0 0 0 0 transparent;flex:none}
+.led.ready{background:var(--green);box-shadow:0 0 6px var(--green)}
+.led.running{background:var(--cyan);box-shadow:0 0 6px var(--cyan);animation:pulse 1s infinite}
+.led.halted{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.led.fault{background:var(--red);box-shadow:0 0 6px var(--red)}
+@keyframes pulse{50%{opacity:.45}}
+.statustext{font-family:var(--disp);font-size:11px;letter-spacing:.12em;color:var(--dim);min-width:118px}
+.instret{font-size:11px;color:var(--faint)}
+.spacer{flex:1}
+.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,select{
+  font-family:var(--disp); font-size:12px; letter-spacing:.08em; color:var(--text);
+  background:var(--panel); border:1px solid var(--line); border-radius:3px; padding:6px 13px; cursor:pointer;
+}
+button:hover{border-color:var(--dim)}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
+button.primary{border-color:var(--amber-dim); color:var(--amber)}
+button.primary:hover{border-color:var(--amber)}
+button:disabled{opacity:.4;cursor:default}
+select{padding:6px 8px}
+/* ---------- layout ---------- */
+main{
+  flex:1; display:grid; gap:1px; background:var(--line2); min-height:0;
+  grid-template-columns: minmax(320px,1.1fr) minmax(330px,1fr) minmax(360px,1.05fr);
+  grid-template-rows: minmax(0,1fr);
+}
+.col{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg)}
+.panel{display:flex;flex-direction:column;min-height:0;background:var(--bg)}
+.panel + .panel{border-top:1px solid var(--line2)}
+.panel-head{
+  display:flex;align-items:center;gap:10px; padding:7px 12px; flex:none;
+  border-bottom:1px solid var(--line2); background:var(--panel2);
+}
+.panel-title{font-family:var(--disp);font-size:11px;font-weight:600;letter-spacing:.18em;color:var(--dim)}
+.panel-head .meta{font-size:10.5px;color:var(--faint)}
+.panel-head .right{margin-left:auto;display:flex;gap:6px;align-items:center}
+.panel-head button{padding:3px 9px;font-size:10.5px}
+.panel-body{flex:1;min-height:0;overflow:auto;position:relative}
+/* ---------- C editor ---------- */
+#csrc{
+  width:100%;height:100%;resize:none;border:0;background:var(--bg);color:var(--text);
+  font-family:var(--mono);font-size:13px;line-height:1.55;padding:10px 14px;tab-size:4;
+}
+#csrc::placeholder{color:var(--faint)}
+/* ---------- console ---------- */
+#console{padding:10px 14px;white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.5;color:var(--text)}
+#console .err{color:var(--red)}
+#console .sys{color:var(--dim)}
+#console .ok{color:var(--green)}
+/* ---------- assembly listing ---------- */
+#asmview{font-size:12px;line-height:1.5;padding:6px 0}
+.aline{display:flex;white-space:pre;min-height:18px}
+.aline .gut{
+  width:64px;flex:none;text-align:right;padding-right:8px;color:var(--faint);cursor:pointer;user-select:none;
+  border-right:1px solid var(--line2);position:relative;
+}
+.aline .gut:hover{color:var(--dim)}
+.aline .gut.bp::before{content:'';position:absolute;left:5px;top:50%;transform:translateY(-50%);width:7px;height:7px;border-radius:50%;background:var(--red)}
+.aline .txt{padding-left:10px;color:var(--text)}
+.aline .txt .cmt{color:var(--faint)}
+.aline .txt .lbl{color:var(--cyan)}
+.aline.cur{background:rgba(98,207,221,.10)}
+.aline.cur .gut{color:var(--cyan)}
+.aline.cur .txt::before{content:'▸';color:var(--cyan);margin-right:0;position:absolute;margin-left:-9px}
+#asmedit{width:100%;height:100%;resize:none;border:0;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12px;line-height:1.5;padding:10px 14px;display:none}
+/* ---------- registers: the readout ---------- */
+#regs{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:0;padding:8px 10px;
+}
+.reg{
+  display:flex;align-items:baseline;gap:7px;padding:2.5px 6px;border-radius:2px;
+}
+.reg .rn{width:38px;flex:none;color:var(--dim);font-size:11px;text-align:right}
+.reg .rv{
+  font-weight:500;color:var(--amber);letter-spacing:.04em;cursor:text;
+  text-shadow:0 0 7px rgba(240,180,84,.28);
+}
+.reg .rv.zero{color:var(--amber-dim);text-shadow:none}
+.reg .rd{font-size:10px;color:var(--faint);margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:72px}
+.reg.changed{animation:regflash .55s ease-out}
+@keyframes regflash{0%{background:rgba(240,180,84,.30)}100%{background:transparent}}
+.reg input,.mem-edit{
+  font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--amber);
+  border:1px solid var(--amber-dim);border-radius:2px;width:90px;padding:0 3px;
+}
+.pcrow{display:flex;align-items:baseline;gap:10px;padding:6px 16px;border-bottom:1px solid var(--line2);background:var(--panel2)}
+.pcrow .rn{color:var(--dim);font-family:var(--disp);font-size:11px;letter-spacing:.15em}
+.pcrow .rv{color:var(--cyan);font-weight:600;cursor:text;text-shadow:0 0 7px rgba(98,207,221,.3)}
+.pcrow .rd{font-size:10.5px;color:var(--faint)}
+/* ---------- memory ---------- */
+.memnav{display:flex;gap:6px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap;background:var(--panel2)}
+.memnav input{
+  font-family:var(--mono);font-size:11.5px;background:var(--bg);color:var(--text);
+  border:1px solid var(--line);border-radius:2px;padding:3px 6px;width:84px;
+}
+.chip{font-family:var(--disp);font-size:10px;letter-spacing:.08em;padding:3px 8px;border:1px solid var(--line);border-radius:2px;background:var(--bg);color:var(--dim);cursor:pointer}
+.chip:hover{color:var(--text);border-color:var(--dim)}
+#memdump{font-size:11.5px;line-height:1.65;padding:8px 12px;white-space:pre}
+.mrow{display:flex}
+.mrow .ma{color:var(--faint);width:58px;flex:none}
+.mrow .mb{display:flex}
+.mb span{cursor:text;padding:0 1px;color:var(--amber);text-shadow:0 0 6px rgba(240,180,84,.18)}
+.mb span.zb{color:var(--faint);text-shadow:none}
+.mb span.g8{margin-left:7px}
+.mb span.written{animation:regflash .55s ease-out;color:var(--amber)}
+.mb span.sphere{box-shadow:inset 0 -2px 0 var(--cyan)}
+.mrow .mt{color:var(--dim);margin-left:14px}
+@media (prefers-reduced-motion: reduce){
+  .reg.changed,.mb span.written{animation:none}
+  .led.running{animation:none}
+}
+/* ---------- responsive ---------- */
+@media (max-width:1080px){
+  main{grid-template-columns:1fr 1fr}
+  .col3{grid-column:1 / -1}
+}
+@media (max-width:760px){
+  main{grid-template-columns:1fr}
+  .col{min-height:300px}
+  .panel-body{max-height:46vh}
+}
+footer{padding:5px 16px;border-top:1px solid var(--line);font-size:10.5px;color:var(--faint);display:flex;gap:18px;flex-wrap:wrap}
+footer span b{color:var(--dim);font-weight:500}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">RV32 <b>WORKBENCH</b></div>
+  <div class="statusbox">
+    <div class="led" id="led"></div>
+    <div class="statustext" id="statustext">NO PROGRAM</div>
+    <div class="instret" id="instret"></div>
+  </div>
+  <div class="spacer"></div>
+  <div class="controls">
+    <select id="samples" title="Load a sample program"></select>
+    <button id="btnBuild" class="primary" title="Compile C → assemble → load (Ctrl+Enter)">Build</button>
+    <button id="btnStep" title="Execute one instruction (F8)">Step</button>
+    <button id="btnRun" title="Run until halt or breakpoint">Run</button>
+    <button id="btnReset" title="Reload the program and clear state">Reset</button>
+    <select id="speed" title="Run speed">
+      <option value="8">8 instr/s</option>
+      <option value="60">60 instr/s</option>
+      <option value="3000" selected>3 k instr/s</option>
+      <option value="2000000">Full speed</option>
+    </select>
+  </div>
+</header>
+
+<main>
+  <div class="col col1">
+    <div class="panel" style="flex:2.2">
+      <div class="panel-head">
+        <span class="panel-title">C SOURCE</span>
+        <span class="meta">rebuilds as you type</span>
+      </div>
+      <div class="panel-body">
+        <textarea id="csrc" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+      </div>
+    </div>
+    <div class="panel" style="flex:1">
+      <div class="panel-head">
+        <span class="panel-title">CONSOLE</span>
+        <div class="right"><button id="btnClear">Clear</button></div>
+      </div>
+      <div class="panel-body"><div id="console"></div></div>
+    </div>
+  </div>
+
+  <div class="col col2">
+    <div class="panel" style="flex:1">
+      <div class="panel-head">
+        <span class="panel-title">ASSEMBLY</span>
+        <span class="meta" id="asmmeta"></span>
+        <div class="right">
+          <button id="btnAsmEdit">Edit</button>
+          <button id="btnAsmApply" style="display:none">Assemble</button>
+          <button id="btnAsmCancel" style="display:none">Cancel</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div id="asmview"></div>
+        <textarea id="asmedit" spellcheck="false"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="col col3">
+    <div class="panel" style="flex:1.35">
+      <div class="panel-head">
+        <span class="panel-title">REGISTERS</span>
+        <span class="meta">click a value to edit</span>
+      </div>
+      <div class="pcrow">
+        <span class="rn">PC</span><span class="rv" id="pcval">00000000</span><span class="rd" id="pcdis"></span>
+      </div>
+      <div class="panel-body"><div id="regs"></div></div>
+    </div>
+    <div class="panel" style="flex:1">
+      <div class="panel-head">
+        <span class="panel-title">MEMORY</span>
+        <span class="meta">click a byte to edit</span>
+      </div>
+      <div class="memnav">
+        <input id="memaddr" value="0x4000" title="Start address">
+        <button class="chip" data-go="text">.text</button>
+        <button class="chip" data-go="data">.data</button>
+        <button class="chip" data-go="sp">sp</button>
+        <button class="chip" data-go="s0">s0/fp</button>
+      </div>
+      <div class="panel-body"><div id="memdump"></div></div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <span><b>builtins</b> print_int(x) · print_char(c) · print_str(s) · read_int() · exit(n)</span>
+  <span><b>memory map</b> .text 0x0000 · .data 0x4000 · stack ↓ from 0x10000</span>
+  <span><b>breakpoints</b> click an address in the listing</span>
+  <span><b>ISA</b> RV32IM, little-endian</span>
+</footer>
+
+<script>
+// ============================================================
+// RV32 Workbench core: C-subset compiler -> RV32IM asm -> machine code -> CPU
+// ============================================================
+
+// ---------------- Tokenizer ----------------
+const KEYWORDS = new Set(['int','char','void','if','else','while','for','return','break','continue','sizeof']);
+const PUNCTS = ['<<=','>>=','==','!=','<=','>=','&&','||','<<','>>','+=','-=','*=','/=','%=','&=','|=','^=','++','--',
+  '+','-','*','/','%','&','|','^','~','!','<','>','=','(',')','{','}','[',']',',',';','?',':'];
+
+function CErr(msg, line){ const e = new Error(msg); e.cline = line; e.isCompile = true; return e; }
+
+function tokenize(src){
+  const toks = []; let i = 0, line = 1;
+  const n = src.length;
+  function esc(c){ return {n:'\n',t:'\t',r:'\r','0':'\0','\\':'\\','\'':'\'','"':'"'}[c] !== undefined ? {n:'\n',t:'\t',r:'\r','0':'\0','\\':'\\','\'':'\'','"':'"'}[c] : c; }
+  while (i < n){
+    const c = src[i];
+    if (c === '\n'){ line++; i++; continue; }
+    if (c === ' ' || c === '\t' || c === '\r'){ i++; continue; }
+    if (c === '/' && src[i+1] === '/'){ while (i < n && src[i] !== '\n') i++; continue; }
+    if (c === '/' && src[i+1] === '*'){
+      i += 2;
+      while (i < n && !(src[i] === '*' && src[i+1] === '/')){ if (src[i] === '\n') line++; i++; }
+      if (i >= n) throw CErr('unterminated comment', line);
+      i += 2; continue;
+    }
+    if (/[0-9]/.test(c)){
+      let j = i;
+      if (c === '0' && (src[i+1] === 'x' || src[i+1] === 'X')){
+        j = i + 2; while (j < n && /[0-9a-fA-F]/.test(src[j])) j++;
+        toks.push({type:'num', val: parseInt(src.slice(i, j), 16) | 0, line});
+      } else {
+        while (j < n && /[0-9]/.test(src[j])) j++;
+        toks.push({type:'num', val: parseInt(src.slice(i, j), 10) | 0, line});
+      }
+      i = j; continue;
+    }
+    if (/[A-Za-z_]/.test(c)){
+      let j = i; while (j < n && /[A-Za-z0-9_]/.test(src[j])) j++;
+      const w = src.slice(i, j);
+      toks.push({type: KEYWORDS.has(w) ? 'kw' : 'ident', val: w, line});
+      i = j; continue;
+    }
+    if (c === '\''){
+      i++;
+      let v;
+      if (src[i] === '\\'){ v = esc(src[i+1]).charCodeAt(0); i += 2; }
+      else { v = src.charCodeAt(i); i++; }
+      if (src[i] !== '\'') throw CErr('unterminated char literal', line);
+      i++;
+      toks.push({type:'num', val: v, line}); continue;
+    }
+    if (c === '"'){
+      i++;
+      let s = '';
+      while (i < n && src[i] !== '"'){
+        if (src[i] === '\n') throw CErr('unterminated string', line);
+        if (src[i] === '\\'){ s += esc(src[i+1]); i += 2; }
+        else { s += src[i]; i++; }
+      }
+      if (i >= n) throw CErr('unterminated string', line);
+      i++;
+      toks.push({type:'str', val: s, line}); continue;
+    }
+    let matched = null;
+    for (const p of PUNCTS){ if (src.startsWith(p, i)){ matched = p; break; } }
+    if (!matched) throw CErr(`stray character '${c}'`, line);
+    toks.push({type:'punct', val: matched, line});
+    i += matched.length;
+  }
+  toks.push({type:'eof', val:'', line});
+  return toks;
+}
+
+// ---------------- Types ----------------
+const T_INT  = {kind:'int'};
+const T_CHAR = {kind:'char'};
+const T_VOID = {kind:'void'};
+function ptrTo(b){ return {kind:'ptr', base: b}; }
+function arrOf(b, len){ return {kind:'array', base: b, len}; }
+function sizeOf(t){
+  if (t.kind === 'int' || t.kind === 'ptr') return 4;
+  if (t.kind === 'char') return 1;
+  if (t.kind === 'array') return sizeOf(t.base) * t.len;
+  return 0;
+}
+function isPtrLike(t){ return t.kind === 'ptr' || t.kind === 'array'; }
+function baseOf(t){ return t.base; }
+function isInteger(t){ return t.kind === 'int' || t.kind === 'char'; }
+
+// Builtins handled as ecall sequences (RARS-style service codes)
+const BUILTINS = {
+  print_int:  {svc: 1,  args: 1, ret: T_VOID},
+  print_str:  {svc: 4,  args: 1, ret: T_VOID},
+  read_int:   {svc: 5,  args: 0, ret: T_INT},
+  print_char: {svc: 11, args: 1, ret: T_VOID},
+  exit:       {svc: 93, args: 1, ret: T_VOID},
+};
+
+// ---------------- Parser ----------------
+function parse(toks){
+  let pos = 0;
+  const prog = {funcs: [], globals: [], strings: []};
+  const globalMap = new Map();
+  const funcMap = new Map();
+  let curFn = null;
+  let scopes = [];
+
+  const peek = (k = 0) => toks[pos + k];
+  const tok  = () => toks[pos];
+  function next(){ return toks[pos++]; }
+  function isP(v){ const t = tok(); return t.type === 'punct' && t.val === v; }
+  function isKw(v){ const t = tok(); return t.type === 'kw' && t.val === v; }
+  function eatP(v){ if (!isP(v)) throw CErr(`expected '${v}' but got '${tok().val || 'end of file'}'`, tok().line); pos++; }
+  function eatKw(v){ if (!isKw(v)) throw CErr(`expected '${v}'`, tok().line); pos++; }
+
+  function isTypeStart(){ return isKw('int') || isKw('char') || isKw('void'); }
+  function parseBaseType(){
+    if (isKw('int')){ pos++; return T_INT; }
+    if (isKw('char')){ pos++; return T_CHAR; }
+    if (isKw('void')){ pos++; return T_VOID; }
+    throw CErr('expected a type', tok().line);
+  }
+  function parseStars(t){ while (isP('*')){ pos++; t = ptrTo(t); } return t; }
+
+  function findVar(name){
+    for (let s = scopes.length - 1; s >= 0; s--){
+      if (scopes[s].has(name)) return scopes[s].get(name);
+    }
+    if (globalMap.has(name)) return globalMap.get(name);
+    return null;
+  }
+
+  function newLocal(name, type, line){
+    if (scopes[scopes.length - 1].has(name)) throw CErr(`redeclaration of '${name}'`, line);
+    const v = {name, type, isLocal: true, offset: 0};
+    scopes[scopes.length - 1].set(name, v);
+    curFn.locals.push(v);
+    return v;
+  }
+
+  // ---- expressions ----
+  function numNode(v, line){ return {kind:'num', val: v, type: T_INT, line}; }
+
+  function primary(){
+    const t = tok();
+    if (t.type === 'num'){ pos++; return numNode(t.val, t.line); }
+    if (t.type === 'str'){
+      pos++;
+      let idx = prog.strings.indexOf(t.val);
+      if (idx < 0){ idx = prog.strings.length; prog.strings.push(t.val); }
+      return {kind:'str', idx, type: ptrTo(T_CHAR), line: t.line};
+    }
+    if (isP('(')){ pos++; const e = expr(); eatP(')'); return e; }
+    if (isKw('sizeof')){
+      pos++;
+      if (isP('(') && (peek(1).type === 'kw' && peek(1).val !== 'sizeof')){
+        pos++; let ty = parseStars(parseBaseType()); eatP(')');
+        return numNode(sizeOf(ty), t.line);
+      }
+      const e = unary();
+      return numNode(sizeOf(e.type), t.line);
+    }
+    if (t.type === 'ident'){
+      pos++;
+      if (isP('(')){ // call
+        pos++;
+        const args = [];
+        if (!isP(')')){
+          args.push(assign());
+          while (isP(',')){ pos++; args.push(assign()); }
+        }
+        eatP(')');
+        const b = BUILTINS[t.val];
+        if (b){
+          if (args.length !== b.args) throw CErr(`${t.val}() takes ${b.args} argument(s)`, t.line);
+          return {kind:'builtin', name: t.val, svc: b.svc, args, type: b.ret === T_VOID ? T_INT : b.ret, line: t.line};
+        }
+        if (args.length > 8) throw CErr('at most 8 arguments are supported', t.line);
+        const f = funcMap.get(t.val);
+        return {kind:'call', name: t.val, args, type: f ? f.retType : T_INT, line: t.line};
+      }
+      const v = findVar(t.val);
+      if (!v) throw CErr(`'${t.val}' is not declared`, t.line);
+      return {kind:'var', v, type: v.type, line: t.line};
+    }
+    throw CErr(`unexpected '${t.val || 'end of file'}'`, t.line);
+  }
+
+  function mkDeref(e, line){
+    if (!isPtrLike(e.type)) throw CErr('cannot dereference a non-pointer', line);
+    if (e.type.base.kind === 'void') throw CErr('cannot dereference void*', line);
+    return {kind:'deref', e, type: e.type.base, line};
+  }
+  function mkAdd(l, r, line){ // handles pointer arithmetic typing; ptr goes left
+    if (isPtrLike(l.type) && isPtrLike(r.type)) throw CErr('cannot add two pointers', line);
+    if (isPtrLike(r.type)){ const t = l; l = r; r = t; }
+    const type = isPtrLike(l.type) ? ptrTo(l.type.base) : T_INT;
+    return {kind:'bin', op:'+', l, r, type, line};
+  }
+  function mkSub(l, r, line){
+    let type = T_INT;
+    if (isPtrLike(l.type) && isPtrLike(r.type)) type = T_INT;
+    else if (isPtrLike(l.type)) type = ptrTo(l.type.base);
+    else if (isPtrLike(r.type)) throw CErr('cannot subtract a pointer from an integer', line);
+    return {kind:'bin', op:'-', l, r, type, line};
+  }
+
+  function postfix(){
+    let e = primary();
+    for (;;){
+      if (isP('[')){
+        const line = tok().line; pos++;
+        const idx = expr(); eatP(']');
+        e = mkDeref(mkAdd(e, idx, line), line);
+      } else if (isP('++') || isP('--')){
+        const op = tok().val; const line = tok().line; pos++;
+        requireLvalue(e, line);
+        e = {kind:'postincdec', op, e, type: isPtrLike(e.type) ? ptrTo(e.type.base) : T_INT, line};
+      } else break;
+    }
+    return e;
+  }
+
+  function requireLvalue(e, line){
+    if (e.kind !== 'var' && e.kind !== 'deref') throw CErr('expression is not assignable', line);
+    if (e.type.kind === 'array') throw CErr('an array is not assignable', line);
+  }
+
+  function unary(){
+    const t = tok();
+    if (isP('-')){ pos++; const e = unary(); return {kind:'neg', e, type: T_INT, line: t.line}; }
+    if (isP('!')){ pos++; const e = unary(); return {kind:'lognot', e, type: T_INT, line: t.line}; }
+    if (isP('~')){ pos++; const e = unary(); return {kind:'bitnot', e, type: T_INT, line: t.line}; }
+    if (isP('*')){ pos++; const e = unary(); return mkDeref(e, t.line); }
+    if (isP('&')){
+      pos++; const e = unary();
+      if (e.kind !== 'var' && e.kind !== 'deref') throw CErr("cannot take the address of this expression", t.line);
+      const base = e.type.kind === 'array' ? e.type.base : e.type;
+      return {kind:'addr', e, type: ptrTo(base), line: t.line};
+    }
+    if (isP('++') || isP('--')){
+      const op = tok().val; pos++; const e = unary();
+      requireLvalue(e, t.line);
+      return {kind:'preincdec', op, e, type: isPtrLike(e.type) ? ptrTo(e.type.base) : T_INT, line: t.line};
+    }
+    return postfix();
+  }
+
+  function binLevel(sub, ops){
+    return function(){
+      let l = sub();
+      for (;;){
+        const t = tok();
+        if (t.type === 'punct' && ops.includes(t.val)){
+          pos++;
+          const r = sub();
+          if (t.val === '+') l = mkAdd(l, r, t.line);
+          else if (t.val === '-') l = mkSub(l, r, t.line);
+          else l = {kind:'bin', op: t.val, l, r, type: T_INT, line: t.line};
+        } else return l;
+      }
+    };
+  }
+  const mul    = binLevel(unary, ['*','/','%']);
+  const addsub = binLevel(mul, ['+','-']);
+  const shift  = binLevel(addsub, ['<<','>>']);
+  const rel    = binLevel(shift, ['<','>','<=','>=']);
+  const eq     = binLevel(rel, ['==','!=']);
+  const band   = binLevel(eq, ['&']);
+  const bxor   = binLevel(band, ['^']);
+  const bor    = binLevel(bxor, ['|']);
+
+  function logand(){
+    let l = bor();
+    while (isP('&&')){ const line = tok().line; pos++; l = {kind:'logand', l, r: bor(), type: T_INT, line}; }
+    return l;
+  }
+  function logor(){
+    let l = logand();
+    while (isP('||')){ const line = tok().line; pos++; l = {kind:'logor', l, r: logand(), type: T_INT, line}; }
+    return l;
+  }
+  function ternary(){
+    const c = logor();
+    if (isP('?')){
+      const line = tok().line; pos++;
+      const a = assign(); eatP(':');
+      const b = ternary();
+      return {kind:'cond', c, a, b, type: a.type, line};
+    }
+    return c;
+  }
+  function assign(){
+    const l = ternary();
+    const t = tok();
+    if (t.type === 'punct' && ['=','+=','-=','*=','/=','%=','&=','|=','^=','<<=','>>='].includes(t.val)){
+      pos++;
+      requireLvalue(l, t.line);
+      const r = assign();
+      if (t.val === '=') return {kind:'assign', l, r, type: l.type, line: t.line};
+      return {kind:'opassign', op: t.val.slice(0, -1), l, r, type: l.type, line: t.line};
+    }
+    return l;
+  }
+  function expr(){ return assign(); }
+
+  // ---- statements ----
+  function declStmt(){
+    const line = tok().line;
+    const base = parseBaseType();
+    const items = [];
+    for (;;){
+      let ty = parseStars(base);
+      const nameTok = next();
+      if (nameTok.type !== 'ident') throw CErr('expected a variable name', nameTok.line);
+      if (isP('[')){
+        pos++;
+        const lenTok = next();
+        if (lenTok.type !== 'num' || lenTok.val <= 0) throw CErr('array length must be a positive constant', lenTok.line);
+        eatP(']');
+        ty = arrOf(ty, lenTok.val);
+      }
+      if (ty.kind === 'void') throw CErr('variables cannot have type void', nameTok.line);
+      const v = newLocal(nameTok.val, ty, nameTok.line);
+      let init = null;
+      if (isP('=')){
+        pos++;
+        if (ty.kind === 'array') throw CErr('local array initialisers are not supported', nameTok.line);
+        init = assign();
+      }
+      items.push({v, init, line: nameTok.line});
+      if (isP(',')){ pos++; continue; }
+      break;
+    }
+    eatP(';');
+    return {kind:'decl', items, line};
+  }
+
+  function stmt(){
+    const t = tok();
+    if (isP('{')){
+      pos++;
+      scopes.push(new Map());
+      const body = [];
+      while (!isP('}')) body.push(stmt());
+      pos++;
+      scopes.pop();
+      return {kind:'block', body, line: t.line};
+    }
+    if (isKw('if')){
+      pos++; eatP('('); const c = expr(); eatP(')');
+      const then = stmt();
+      let els = null;
+      if (isKw('else')){ pos++; els = stmt(); }
+      return {kind:'if', c, then, els, line: t.line};
+    }
+    if (isKw('while')){
+      pos++; eatP('('); const c = expr(); eatP(')');
+      return {kind:'while', c, body: stmt(), line: t.line};
+    }
+    if (isKw('for')){
+      pos++; eatP('(');
+      scopes.push(new Map());
+      let init = null, c = null, inc = null;
+      if (!isP(';')) init = isTypeStart() ? declStmt() : (() => { const e = {kind:'exprstmt', e: expr(), line: t.line}; eatP(';'); return e; })();
+      else pos++;
+      if (!isP(';')) c = expr();
+      eatP(';');
+      if (!isP(')')) inc = expr();
+      eatP(')');
+      const body = stmt();
+      scopes.pop();
+      return {kind:'for', init, c, inc, body, line: t.line};
+    }
+    if (isKw('return')){
+      pos++;
+      let e = null;
+      if (!isP(';')) e = expr();
+      eatP(';');
+      return {kind:'return', e, line: t.line};
+    }
+    if (isKw('break')){ pos++; eatP(';'); return {kind:'break', line: t.line}; }
+    if (isKw('continue')){ pos++; eatP(';'); return {kind:'continue', line: t.line}; }
+    if (isP(';')){ pos++; return {kind:'block', body: [], line: t.line}; }
+    if (isTypeStart()) return declStmt();
+    const e = expr(); eatP(';');
+    return {kind:'exprstmt', e, line: t.line};
+  }
+
+  // ---- top level ----
+  function constExpr(){
+    let sign = 1;
+    if (isP('-')){ pos++; sign = -1; }
+    const t = next();
+    if (t.type !== 'num') throw CErr('global initialisers must be constant', t.line);
+    return (sign * t.val) | 0;
+  }
+
+  while (tok().type !== 'eof'){
+    const line = tok().line;
+    const base = parseBaseType();
+    let ty = parseStars(base);
+    const nameTok = next();
+    if (nameTok.type !== 'ident') throw CErr('expected a name', nameTok.line);
+
+    if (isP('(')){
+      // function definition or prototype
+      pos++;
+      const params = [];
+      if (!isP(')')){
+        if (isKw('void') && peek(1).type === 'punct' && peek(1).val === ')'){ pos++; }
+        else for (;;){
+          const pb = parseBaseType();
+          let pt = parseStars(pb);
+          const pn = next();
+          if (pn.type !== 'ident') throw CErr('expected a parameter name', pn.line);
+          if (isP('[')){ pos++; eatP(']'); pt = ptrTo(pt); } // array param decays
+          if (pt.kind === 'void') throw CErr('parameters cannot have type void', pn.line);
+          params.push({name: pn.val, type: pt});
+          if (isP(',')){ pos++; continue; }
+          break;
+        }
+      }
+      eatP(')');
+      if (params.length > 8) throw CErr('at most 8 parameters are supported', line);
+      const fn = funcMap.get(nameTok.val) || {name: nameTok.val, retType: ty, params, locals: [], body: null};
+      funcMap.set(nameTok.val, fn);
+      if (isP(';')){ pos++; continue; } // prototype
+      if (fn.body) throw CErr(`redefinition of '${nameTok.val}'`, line);
+      curFn = fn;
+      fn.locals = [];
+      scopes = [new Map()];
+      fn.paramVars = params.map(p => newLocal(p.name, p.type, line));
+      if (!isP('{')) throw CErr('expected a function body', tok().line);
+      fn.body = stmt();
+      scopes = [];
+      curFn = null;
+      prog.funcs.push(fn);
+      continue;
+    }
+
+    // global variable(s)
+    for (;;){
+      let gty = ty;
+      if (isP('[')){
+        pos++;
+        const lenTok = next();
+        if (lenTok.type !== 'num' || lenTok.val <= 0) throw CErr('array length must be a positive constant', lenTok.line);
+        eatP(']');
+        gty = arrOf(gty, lenTok.val);
+      }
+      if (gty.kind === 'void') throw CErr('variables cannot have type void', nameTok.line);
+      if (globalMap.has(nameTok.val)) throw CErr(`redeclaration of '${nameTok.val}'`, nameTok.line);
+      const g = {name: nameTok.val, type: gty, isLocal: false, init: null};
+      if (isP('=')){
+        pos++;
+        if (gty.kind === 'array'){
+          eatP('{');
+          const vals = [];
+          if (!isP('}')){
+            vals.push(constExpr());
+            while (isP(',')){ pos++; if (isP('}')) break; vals.push(constExpr()); }
+          }
+          eatP('}');
+          if (vals.length > gty.len) throw CErr('too many initialisers', nameTok.line);
+          g.init = vals;
+        } else {
+          g.init = constExpr();
+        }
+      }
+      globalMap.set(g.name, g);
+      prog.globals.push(g);
+      if (isP(',')){
+        pos++;
+        ty = parseStars(base);
+        const nt = next();
+        if (nt.type !== 'ident') throw CErr('expected a name', nt.line);
+        nameTok.val = nt.val; nameTok.line = nt.line;
+        continue;
+      }
+      eatP(';');
+      break;
+    }
+  }
+
+  if (!funcMap.has('main') || !funcMap.get('main').body) throw CErr('no main() function is defined', 1);
+  return prog;
+}
+
+// ---------------- Code generation ----------------
+function codegen(prog, cSrc){
+  const out = [];
+  const cLines = cSrc.split('\n');
+  let labelN = 0;
+  let curFn = null;
+  const brk = [], cont = [];
+  function L(){ return `.L${labelN++}`; }
+  function emit(s){ out.push('  ' + s); }
+  function emitLabel(s){ out.push(s + ':'); }
+  function emitSrc(line){
+    if (line >= 1 && line <= cLines.length){
+      const txt = cLines[line - 1].trim();
+      if (txt) out.push(`                                # C:${line}  ${txt}`.replace(/^ +#/, '  #'));
+    }
+  }
+  const push = () => { emit('addi sp, sp, -4'); emit('sw a0, 0(sp)'); };
+  const pop = (r) => { emit(`lw ${r}, 0(sp)`); emit('addi sp, sp, 4'); };
+
+  function load(type){
+    if (type.kind === 'array') return;            // address *is* the value
+    emit(type.kind === 'char' ? 'lb a0, 0(a0)' : 'lw a0, 0(a0)');
+  }
+  function store(type){                            // addr in a1, value in a0
+    emit(type.kind === 'char' ? 'sb a0, 0(a1)' : 'sw a0, 0(a1)');
+  }
+  function scaleLog2(t){ return sizeOf(baseOf(t)) === 4 ? 2 : 0; }
+
+  function genAddr(node){
+    if (node.kind === 'var'){
+      const v = node.v;
+      if (v.isLocal){
+        if (v.offset >= -2048) emit(`addi a0, s0, ${v.offset}`);
+        else { emit(`li a0, ${v.offset}`); emit('add a0, s0, a0'); }
+      } else {
+        emit(`la a0, ${v.name}`);
+      }
+      return;
+    }
+    if (node.kind === 'deref'){ genExpr(node.e); return; }
+    if (node.kind === 'str'){ emit(`la a0, .str${node.idx}`); return; }
+    throw CErr('expression is not addressable', node.line);
+  }
+
+  function emitBin(op, ltype, rtype){              // a0 = a0 OP a1
+    switch (op){
+      case '+':
+        if (isPtrLike(ltype)){ const s = scaleLog2(ltype); if (s) emit(`slli a1, a1, ${s}`); }
+        emit('add a0, a0, a1'); break;
+      case '-':
+        if (isPtrLike(ltype) && isPtrLike(rtype)){
+          emit('sub a0, a0, a1');
+          const s = scaleLog2(ltype); if (s) emit(`srai a0, a0, ${s}`);
+        } else if (isPtrLike(ltype)){
+          const s = scaleLog2(ltype); if (s) emit(`slli a1, a1, ${s}`);
+          emit('sub a0, a0, a1');
+        } else emit('sub a0, a0, a1');
+        break;
+      case '*': emit('mul a0, a0, a1'); break;
+      case '/': emit('div a0, a0, a1'); break;
+      case '%': emit('rem a0, a0, a1'); break;
+      case '&': emit('and a0, a0, a1'); break;
+      case '|': emit('or a0, a0, a1'); break;
+      case '^': emit('xor a0, a0, a1'); break;
+      case '<<': emit('sll a0, a0, a1'); break;
+      case '>>': emit('sra a0, a0, a1'); break;
+      case '==': emit('sub a0, a0, a1'); emit('seqz a0, a0'); break;
+      case '!=': emit('sub a0, a0, a1'); emit('snez a0, a0'); break;
+      case '<':  emit('slt a0, a0, a1'); break;
+      case '>':  emit('slt a0, a1, a0'); break;
+      case '<=': emit('slt a0, a1, a0'); emit('xori a0, a0, 1'); break;
+      case '>=': emit('slt a0, a0, a1'); emit('xori a0, a0, 1'); break;
+      default: throw CErr(`operator '${op}' is not supported`, 0);
+    }
+  }
+
+  function genExpr(node){
+    switch (node.kind){
+      case 'num': emit(`li a0, ${node.val}`); return;
+      case 'str': emit(`la a0, .str${node.idx}`); return;
+      case 'var': genAddr(node); load(node.type); return;
+      case 'deref': genExpr(node.e); load(node.type); return;
+      case 'addr': genAddr(node.e); return;
+      case 'neg': genExpr(node.e); emit('neg a0, a0'); return;
+      case 'bitnot': genExpr(node.e); emit('not a0, a0'); return;
+      case 'lognot': genExpr(node.e); emit('seqz a0, a0'); return;
+      case 'assign':
+        genAddr(node.l); push();
+        genExpr(node.r); pop('a1');
+        store(node.l.type);
+        return;
+      case 'opassign': {
+        genAddr(node.l); push();                   // stack: [addr]
+        load(node.l.type); push();                 // stack: [addr, lhsval]
+        genExpr(node.r);                            // a0 = rhs
+        emit('mv a1, a0');
+        pop('a0');                                  // a0 = lhsval
+        emitBin(node.op, node.l.type, node.r.type);
+        pop('a1');                                  // a1 = addr
+        store(node.l.type);
+        return;
+      }
+      case 'preincdec': case 'postincdec': {
+        const step = isPtrLike(node.e.type) ? sizeOf(baseOf(node.e.type)) : 1;
+        const d = node.op === '++' ? step : -step;
+        genAddr(node.e);
+        emit(node.e.type.kind === 'char' ? 'lb a1, 0(a0)' : 'lw a1, 0(a0)');
+        emit(`addi a2, a1, ${d}`);
+        emit(node.e.type.kind === 'char' ? 'sb a2, 0(a0)' : 'sw a2, 0(a0)');
+        emit(node.kind === 'preincdec' ? 'mv a0, a2' : 'mv a0, a1');
+        return;
+      }
+      case 'bin':
+        genExpr(node.r); push();
+        genExpr(node.l); pop('a1');
+        emitBin(node.op, node.l.type, node.r.type);
+        return;
+      case 'logand': {
+        const lf = L(), le = L();
+        genExpr(node.l); emit(`beqz a0, ${lf}`);
+        genExpr(node.r); emit(`beqz a0, ${lf}`);
+        emit('li a0, 1'); emit(`j ${le}`);
+        emitLabel(lf); emit('li a0, 0');
+        emitLabel(le); return;
+      }
+      case 'logor': {
+        const lt = L(), le = L();
+        genExpr(node.l); emit(`bnez a0, ${lt}`);
+        genExpr(node.r); emit(`bnez a0, ${lt}`);
+        emit('li a0, 0'); emit(`j ${le}`);
+        emitLabel(lt); emit('li a0, 1');
+        emitLabel(le); return;
+      }
+      case 'cond': {
+        const lb = L(), le = L();
+        genExpr(node.c); emit(`beqz a0, ${lb}`);
+        genExpr(node.a); emit(`j ${le}`);
+        emitLabel(lb); genExpr(node.b);
+        emitLabel(le); return;
+      }
+      case 'builtin': {
+        if (node.args.length === 1) genExpr(node.args[0]);   // result already lands in a0
+        emit(`li a7, ${node.svc}`);
+        emit('ecall');
+        return;
+      }
+      case 'call': {
+        for (const a of node.args){ genExpr(a); push(); }
+        for (let i = node.args.length - 1; i >= 0; i--) pop(`a${i}`);
+        emit(`call ${node.name}`);
+        return;
+      }
+      default: throw CErr(`cannot generate code for '${node.kind}'`, node.line);
+    }
+  }
+
+  function genStmt(node){
+    switch (node.kind){
+      case 'block': for (const s of node.body) genStmt(s); return;
+      case 'exprstmt': emitSrc(node.line); genExpr(node.e); return;
+      case 'decl':
+        for (const it of node.items){
+          if (it.init){
+            emitSrc(it.line);
+            genAddr({kind:'var', v: it.v, type: it.v.type, line: it.line}); push();
+            genExpr(it.init); pop('a1');
+            store(it.v.type);
+          }
+        }
+        return;
+      case 'if': {
+        emitSrc(node.line);
+        const le = L(), lend = L();
+        genExpr(node.c); emit(`beqz a0, ${le}`);
+        genStmt(node.then);
+        if (node.els){ emit(`j ${lend}`); emitLabel(le); genStmt(node.els); emitLabel(lend); }
+        else emitLabel(le);
+        return;
+      }
+      case 'while': {
+        emitSrc(node.line);
+        const lb = L(), lend = L();
+        cont.push(lb); brk.push(lend);
+        emitLabel(lb);
+        genExpr(node.c); emit(`beqz a0, ${lend}`);
+        genStmt(node.body);
+        emit(`j ${lb}`);
+        emitLabel(lend);
+        cont.pop(); brk.pop();
+        return;
+      }
+      case 'for': {
+        emitSrc(node.line);
+        const lb = L(), lc = L(), lend = L();
+        if (node.init) genStmt(node.init.kind ? node.init : {kind:'exprstmt', e: node.init, line: node.line});
+        cont.push(lc); brk.push(lend);
+        emitLabel(lb);
+        if (node.c){ genExpr(node.c); emit(`beqz a0, ${lend}`); }
+        genStmt(node.body);
+        emitLabel(lc);
+        if (node.inc) genExpr(node.inc);
+        emit(`j ${lb}`);
+        emitLabel(lend);
+        cont.pop(); brk.pop();
+        return;
+      }
+      case 'return':
+        emitSrc(node.line);
+        if (node.e) genExpr(node.e);
+        emit(`j .Lret_${curFn.name}`);
+        return;
+      case 'break':
+        if (!brk.length) throw CErr("'break' outside a loop", node.line);
+        emit(`j ${brk[brk.length - 1]}`); return;
+      case 'continue':
+        if (!cont.length) throw CErr("'continue' outside a loop", node.line);
+        emit(`j ${cont[cont.length - 1]}`); return;
+      default: throw CErr(`cannot generate code for statement '${node.kind}'`, node.line);
+    }
+  }
+
+  // ---- startup ----
+  out.push('# Generated by the RV32 Workbench C compiler');
+  out.push('.text');
+  emitLabel('_start');
+  emit('li sp, 0x10000                 # stack top');
+  emit('call main');
+  emit('li a7, 93                      # exit(main return value)');
+  emit('ecall');
+
+  for (const fn of prog.funcs){
+    curFn = fn;
+    // assign local offsets: ra at -4(s0), saved s0 at -8(s0), locals below
+    let off = -8;
+    for (const v of fn.locals){
+      const sz = Math.max(4, Math.ceil(sizeOf(v.type) / 4) * 4);
+      off -= sz;
+      v.offset = off;
+    }
+    const frame = Math.ceil((-off + 8) / 16) * 16;
+    out.push('');
+    out.push(`# ---- ${fn.retType.kind} ${fn.name}(${fn.params.map(p=>p.name).join(', ')}) ----`);
+    emitLabel(fn.name);
+    if (frame <= 2032){
+      emit(`addi sp, sp, -${frame}`);
+      emit(`sw ra, ${frame - 4}(sp)`);
+      emit(`sw s0, ${frame - 8}(sp)`);
+      emit(`addi s0, sp, ${frame}`);
+    } else {
+      emit(`li t0, ${frame}`);
+      emit('sub sp, sp, t0');
+      emit('add t1, sp, t0');
+      emit('sw ra, -4(t1)');
+      emit('sw s0, -8(t1)');
+      emit('mv s0, t1');
+    }
+    fn.paramVars.forEach((v, i) => {
+      if (v.offset >= -2048) emit(`sw a${i}, ${v.offset}(s0)`);
+      else { emit(`li t0, ${v.offset}`); emit('add t0, s0, t0'); emit(`sw a${i}, 0(t0)`); }
+    });
+    genStmt(fn.body);
+    emit('li a0, 0');
+    emitLabel(`.Lret_${fn.name}`);
+    emit('lw ra, -4(s0)');
+    emit('mv t0, s0');
+    emit('lw s0, -8(s0)');
+    emit('mv sp, t0');
+    emit('ret');
+  }
+
+  // ---- data ----
+  if (prog.globals.length || prog.strings.length){
+    out.push('');
+    out.push('.data');
+    for (const g of prog.globals){
+      if (g.type.kind === 'array'){
+        const elems = g.type.len;
+        const init = g.init || [];
+        if (g.type.base.kind === 'char'){
+          out.push(`${g.name}: .zero ${elems}`);
+        } else if (init.length){
+          const vals = init.concat(new Array(elems - init.length).fill(0));
+          out.push(`${g.name}: .word ${vals.join(', ')}`);
+        } else {
+          out.push(`${g.name}: .zero ${elems * 4}`);
+        }
+      } else if (g.type.kind === 'char'){
+        out.push(`${g.name}: .byte ${g.init === null ? 0 : g.init & 0xff}`);
+      } else {
+        out.push(`${g.name}: .word ${g.init === null ? 0 : g.init}`);
+      }
+    }
+    prog.strings.forEach((s, i) => {
+      out.push(`.str${i}: .asciiz "${s.replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n').replace(/\t/g,'\\t').replace(/\r/g,'\\r').replace(/\0/g,'\\0')}"`);
+    });
+  }
+
+  return out.join('\n');
+}
+
+function compileC(src){
+  return codegen(parse(tokenize(src)), src);
+}
+
+// ---------------- Assembler (RV32IM + pseudo-instructions) ----------------
+const TEXT_BASE = 0x0000;
+const DATA_BASE = 0x4000;
+const MEM_SIZE  = 0x10000;   // 64 KiB; stack grows down from the top
+
+const REG_NAMES = {};
+(function(){
+  const abi = ['zero','ra','sp','gp','tp','t0','t1','t2','s0','s1',
+               'a0','a1','a2','a3','a4','a5','a6','a7',
+               's2','s3','s4','s5','s6','s7','s8','s9','s10','s11',
+               't3','t4','t5','t6'];
+  abi.forEach((n, i) => REG_NAMES[n] = i);
+  for (let i = 0; i < 32; i++) REG_NAMES['x' + i] = i;
+  REG_NAMES['fp'] = 8;
+})();
+const ABI = ['zero','ra','sp','gp','tp','t0','t1','t2','s0','s1','a0','a1','a2','a3','a4','a5','a6','a7','s2','s3','s4','s5','s6','s7','s8','s9','s10','s11','t3','t4','t5','t6'];
+
+function AErr(msg, line){ const e = new Error(msg); e.aline = line; e.isAsm = true; return e; }
+
+function parseReg(s, line){
+  const r = REG_NAMES[s];
+  if (r === undefined) throw AErr(`'${s}' is not a register`, line);
+  return r;
+}
+function parseImm(s, line, syms){
+  s = s.trim();
+  if (/^-?0x[0-9a-fA-F]+$/.test(s)) return parseInt(s, 16) | 0;
+  if (/^-?\d+$/.test(s)) return parseInt(s, 10) | 0;
+  if (syms && syms.has(s)) return syms.get(s);
+  throw AErr(syms ? `'${s}' is not a number or a known label` : `'${s}' is not a number`, line);
+}
+const sx12 = v => (v << 20) >> 20;
+function hi20(v){ return ((v + 0x800) >>> 12) & 0xFFFFF; }
+function lo12(v){ return sx12(v & 0xFFF); }
+
+// instruction encoders
+const encR = (f7,rs2,rs1,f3,rd,op) => ((f7<<25)|(rs2<<20)|(rs1<<15)|(f3<<12)|(rd<<7)|op)>>>0;
+const encI = (imm,rs1,f3,rd,op) => (((imm&0xFFF)<<20)|(rs1<<15)|(f3<<12)|(rd<<7)|op)>>>0;
+const encS = (imm,rs2,rs1,f3,op) => ((((imm>>5)&0x7F)<<25)|(rs2<<20)|(rs1<<15)|(f3<<12)|((imm&0x1F)<<7)|op)>>>0;
+const encB = (imm,rs2,rs1,f3,op) => ((((imm>>12)&1)<<31)|(((imm>>5)&0x3F)<<25)|(rs2<<20)|(rs1<<15)|(f3<<12)|(((imm>>1)&0xF)<<8)|(((imm>>11)&1)<<7)|op)>>>0;
+const encU = (imm,rd,op) => (((imm&0xFFFFF)<<12)|(rd<<7)|op)>>>0;
+const encJ = (imm,rd,op) => ((((imm>>20)&1)<<31)|(((imm>>1)&0x3FF)<<21)|(((imm>>11)&1)<<20)|(((imm>>12)&0xFF)<<12)|(rd<<7)|op)>>>0;
+
+const RTYPE = { add:[0,0], sub:[0x20,0], sll:[0,1], slt:[0,2], sltu:[0,3], xor:[0,4], srl:[0,5], sra:[0x20,5], or:[0,6], and:[0,7],
+  mul:[1,0], mulh:[1,1], mulhsu:[1,2], mulhu:[1,3], div:[1,4], divu:[1,5], rem:[1,6], remu:[1,7] };
+const ITYPE = { addi:0, slti:2, sltiu:3, xori:4, ori:6, andi:7 };
+const SHIFTI = { slli:[0,1], srli:[0,5], srai:[0x20,5] };
+const LOADS = { lb:0, lh:1, lw:2, lbu:4, lhu:5 };
+const STORES = { sb:0, sh:1, sw:2 };
+const BRANCH = { beq:0, bne:1, blt:4, bge:5, bltu:6, bgeu:7 };
+
+function splitOperands(rest){
+  return rest.length ? rest.split(',').map(s => s.trim()).filter(s => s.length) : [];
+}
+function parseMemOp(s, line){    // "imm(reg)" or "(reg)"
+  const m = s.match(/^(-?\w*)\s*\(\s*(\w+)\s*\)$/);
+  if (!m) throw AErr(`'${s}' is not a valid memory operand (expected offset(register))`, line);
+  const off = m[1] === '' ? 0 : parseImm(m[1], line);
+  return {off, reg: parseReg(m[2], line)};
+}
+
+function unescapeAsm(s){
+  return s.replace(/\\(.)/g, (_, c) => ({n:'\n',t:'\t',r:'\r','0':'\0','\\':'\\','"':'"'}[c] ?? c));
+}
+
+// expand one mnemonic into 1..2 concrete records {op, args..., needsSym?}
+function assemble(src){
+  const lines = src.split('\n');
+  const items = [];          // {kind:'instr'|'data', ...}
+  const syms = new Map();
+  let section = 'text';
+  let textPC = TEXT_BASE;
+  const dataBytes = [];
+  let dataPC = DATA_BASE;
+
+  // ---------- pass 1: layout ----------
+  for (let ln = 0; ln < lines.length; ln++){
+    let s = lines[ln];
+    const hash = s.indexOf('#');
+    if (hash >= 0) s = s.slice(0, hash);
+    s = s.trim();
+    if (!s) continue;
+
+    // labels (possibly several) at line start
+    let m;
+    while ((m = s.match(/^([A-Za-z_.][\w.]*)\s*:\s*/))){
+      const name = m[1];
+      if (syms.has(name)) throw AErr(`label '${name}' is defined twice`, ln + 1);
+      syms.set(name, section === 'text' ? textPC : dataPC);
+      s = s.slice(m[0].length);
+    }
+    if (!s) continue;
+
+    if (s[0] === '.'){
+      const dm = s.match(/^(\.\w+)\s*(.*)$/);
+      const dir = dm[1], rest = dm[2];
+      if (dir === '.text'){ section = 'text'; continue; }
+      if (dir === '.data'){ section = 'data'; continue; }
+      if (dir === '.word'){
+        if (section !== 'data') throw AErr('.word is only allowed in the .data section', ln + 1);
+        for (const v of splitOperands(rest)){
+          const x = parseImm(v, ln + 1);
+          dataBytes.push(x & 0xFF, (x >> 8) & 0xFF, (x >> 16) & 0xFF, (x >> 24) & 0xFF);
+          dataPC += 4;
+        }
+        continue;
+      }
+      if (dir === '.byte'){
+        if (section !== 'data') throw AErr('.byte is only allowed in the .data section', ln + 1);
+        for (const v of splitOperands(rest)){ dataBytes.push(parseImm(v, ln + 1) & 0xFF); dataPC++; }
+        continue;
+      }
+      if (dir === '.zero'){
+        if (section !== 'data') throw AErr('.zero is only allowed in the .data section', ln + 1);
+        const cnt = parseImm(rest, ln + 1);
+        for (let i = 0; i < cnt; i++) dataBytes.push(0);
+        dataPC += cnt;
+        continue;
+      }
+      if (dir === '.asciiz' || dir === '.string'){
+        if (section !== 'data') throw AErr(`${dir} is only allowed in the .data section`, ln + 1);
+        const sm = rest.match(/^"((?:[^"\\]|\\.)*)"$/);
+        if (!sm) throw AErr('expected a quoted string', ln + 1);
+        const bytes = unescapeAsm(sm[1]);
+        for (const ch of bytes){ dataBytes.push(ch.charCodeAt(0) & 0xFF); dataPC++; }
+        dataBytes.push(0); dataPC++;
+        continue;
+      }
+      if (dir === '.globl' || dir === '.global' || dir === '.align') continue;  // tolerated
+      throw AErr(`unknown directive '${dir}'`, ln + 1);
+    }
+
+    if (section !== 'text') throw AErr('instructions are only allowed in the .text section', ln + 1);
+    const im = s.match(/^([A-Za-z.]+)\s*(.*)$/);
+    if (!im) throw AErr(`cannot parse '${s}'`, ln + 1);
+    const op = im[1].toLowerCase();
+    const ops = splitOperands(im[2]);
+    // size in instructions (li can be 1 or 2; la/call sized here)
+    let size = 1;
+    if (op === 'li'){
+      if (ops.length !== 2) throw AErr('li needs 2 operands', ln + 1);
+      const v = parseImm(ops[1], ln + 1);
+      size = (v >= -2048 && v <= 2047) ? 1 : 2;
+    } else if (op === 'la'){
+      size = 2;
+    }
+    items.push({kind:'instr', op, ops, line: ln + 1, pc: textPC, size});
+    textPC += size * 4;
+  }
+
+  if (textPC > DATA_BASE) throw AErr(`program text is too large (${textPC} bytes; limit ${DATA_BASE})`, 1);
+  if (dataPC > MEM_SIZE - 1024) throw AErr('data section is too large', 1);
+
+  // ---------- pass 2: encode ----------
+  const words = [];      // {word, pc, line}
+  function push1(w, it){ words.push({word: w >>> 0, pc: it.pc + words.length * 4 - 0, line: it.line}); }
+
+  for (const it of items){
+    const {op, ops, line, pc} = it;
+    const W = [];
+    const reg = i => parseReg(ops[i], line);
+    const imm = i => parseImm(ops[i], line, syms);
+    const need = (n) => { if (ops.length !== n) throw AErr(`${op} needs ${n} operand(s), got ${ops.length}`, line); };
+    const branchTo = (target, atPC) => {
+      const off = target - atPC;
+      if (off < -4096 || off > 4094 || (off & 1)) throw AErr('branch target is out of range', line);
+      return off;
+    };
+
+    if (op in RTYPE){ need(3); const [f7, f3] = RTYPE[op]; W.push(encR(f7, reg(2), reg(1), f3, reg(0), 0x33)); }
+    else if (op in ITYPE){ need(3); const v = imm(2); if (v < -2048 || v > 2047) throw AErr(`immediate ${v} does not fit in 12 bits`, line); W.push(encI(v, reg(1), ITYPE[op], reg(0), 0x13)); }
+    else if (op in SHIFTI){ need(3); const [f7, f3] = SHIFTI[op]; const sh = imm(2); if (sh < 0 || sh > 31) throw AErr('shift amount must be 0..31', line); W.push(encI((f7 << 5) | sh, reg(1), f3, reg(0), 0x13)); }
+    else if (op in LOADS){ need(2); const mo = parseMemOp(ops[1], line); if (mo.off < -2048 || mo.off > 2047) throw AErr('load offset out of range', line); W.push(encI(mo.off, mo.reg, LOADS[op], reg(0), 0x03)); }
+    else if (op in STORES){ need(2); const mo = parseMemOp(ops[1], line); if (mo.off < -2048 || mo.off > 2047) throw AErr('store offset out of range', line); W.push(encS(mo.off, reg(0), mo.reg, STORES[op], 0x23)); }
+    else if (op in BRANCH){ need(3); W.push(encB(branchTo(imm(2), pc), reg(1), reg(0), BRANCH[op], 0x63)); }
+    else if (op === 'lui'){ need(2); W.push(encU(imm(1), reg(0), 0x37)); }
+    else if (op === 'auipc'){ need(2); W.push(encU(imm(1), reg(0), 0x17)); }
+    else if (op === 'jal'){
+      let rd = 1, target;
+      if (ops.length === 1) target = imm(0);
+      else { need(2); rd = reg(0); target = imm(1); }
+      const off = target - pc;
+      if (off < -(1 << 20) || off >= (1 << 20)) throw AErr('jal target is out of range', line);
+      W.push(encJ(off, rd, 0x6F));
+    }
+    else if (op === 'jalr'){
+      if (ops.length === 1) W.push(encI(0, reg(0), 0, 1, 0x67));
+      else if (ops.length === 2 && ops[1].includes('(')){ const mo = parseMemOp(ops[1], line); W.push(encI(mo.off, mo.reg, 0, reg(0), 0x67)); }
+      else { need(3); W.push(encI(imm(2), reg(1), 0, reg(0), 0x67)); }
+    }
+    else if (op === 'ecall'){ W.push(encI(0, 0, 0, 0, 0x73)); }
+    else if (op === 'ebreak'){ W.push(encI(1, 0, 0, 0, 0x73)); }
+    // ---- pseudo-instructions ----
+    else if (op === 'nop'){ W.push(encI(0, 0, 0, 0, 0x13)); }
+    else if (op === 'li'){
+      const rd = reg(0), v = imm(1);
+      if (it.size === 1) W.push(encI(v, 0, 0, rd, 0x13));
+      else { W.push(encU(hi20(v), rd, 0x37)); W.push(encI(lo12(v), rd, 0, rd, 0x13)); }
+    }
+    else if (op === 'la'){
+      need(2);
+      const rd = reg(0), v = imm(1);
+      W.push(encU(hi20(v), rd, 0x37));
+      W.push(encI(lo12(v), rd, 0, rd, 0x13));
+    }
+    else if (op === 'mv'){ need(2); W.push(encI(0, reg(1), 0, reg(0), 0x13)); }
+    else if (op === 'not'){ need(2); W.push(encI(-1, reg(1), 4, reg(0), 0x13)); }
+    else if (op === 'neg'){ need(2); W.push(encR(0x20, reg(1), 0, 0, reg(0), 0x33)); }
+    else if (op === 'seqz'){ need(2); W.push(encI(1, reg(1), 3, reg(0), 0x13)); }
+    else if (op === 'snez'){ need(2); W.push(encR(0, reg(1), 0, 3, reg(0), 0x33)); }
+    else if (op === 'sltz'){ need(2); W.push(encR(0, 0, reg(1), 2, reg(0), 0x33)); }
+    else if (op === 'sgtz'){ need(2); W.push(encR(0, reg(1), 0, 2, reg(0), 0x33)); }
+    else if (op === 'j'){ need(1); const off = imm(0) - pc; if (off < -(1<<20) || off >= (1<<20)) throw AErr('jump target out of range', line); W.push(encJ(off, 0, 0x6F)); }
+    else if (op === 'jr'){ need(1); W.push(encI(0, reg(0), 0, 0, 0x67)); }
+    else if (op === 'ret'){ W.push(encI(0, 1, 0, 0, 0x67)); }
+    else if (op === 'call'){ need(1); const off = imm(0) - pc; if (off < -(1<<20) || off >= (1<<20)) throw AErr('call target out of range', line); W.push(encJ(off, 1, 0x6F)); }
+    else if (op === 'beqz'){ need(2); W.push(encB(branchTo(imm(1), pc), 0, reg(0), 0, 0x63)); }
+    else if (op === 'bnez'){ need(2); W.push(encB(branchTo(imm(1), pc), 0, reg(0), 1, 0x63)); }
+    else if (op === 'blez'){ need(2); W.push(encB(branchTo(imm(1), pc), reg(0), 0, 5, 0x63)); }
+    else if (op === 'bgez'){ need(2); W.push(encB(branchTo(imm(1), pc), 0, reg(0), 5, 0x63)); }
+    else if (op === 'bltz'){ need(2); W.push(encB(branchTo(imm(1), pc), 0, reg(0), 4, 0x63)); }
+    else if (op === 'bgtz'){ need(2); W.push(encB(branchTo(imm(1), pc), reg(0), 0, 4, 0x63)); }
+    else if (op === 'ble'){ need(3); W.push(encB(branchTo(imm(2), pc), reg(0), reg(1), 5, 0x63)); }
+    else if (op === 'bgt'){ need(3); W.push(encB(branchTo(imm(2), pc), reg(0), reg(1), 4, 0x63)); }
+    else if (op === 'bleu'){ need(3); W.push(encB(branchTo(imm(2), pc), reg(0), reg(1), 7, 0x63)); }
+    else if (op === 'bgtu'){ need(3); W.push(encB(branchTo(imm(2), pc), reg(0), reg(1), 6, 0x63)); }
+    else throw AErr(`unknown instruction '${op}'`, line);
+
+    if (W.length !== it.size) throw AErr(`internal sizing error for '${op}'`, line);
+    W.forEach((w, k) => words.push({word: w >>> 0, pc: pc + k * 4, line}));
+  }
+
+  return {words, dataBytes, symbols: syms, textSize: textPC - TEXT_BASE, dataSize: dataBytes.length};
+}
+
+// ---------------- Disassembler (for the listing pane) ----------------
+function disasm(w, pc){
+  const op = w & 0x7F, rd = (w >> 7) & 0x1F, f3 = (w >> 12) & 7, rs1 = (w >> 15) & 0x1F, rs2 = (w >> 20) & 0x1F, f7 = (w >> 25) & 0x7F;
+  const iImm = (w | 0) >> 20;
+  const r = i => ABI[i];
+  switch (op){
+    case 0x33: {
+      const names = f7 === 1 ? ['mul','mulh','mulhsu','mulhu','div','divu','rem','remu']
+        : {0:['add','sll','slt','sltu','xor','srl','or','and'], 0x20:{0:'sub',5:'sra'}}[f7];
+      let n;
+      if (f7 === 1) n = names[f3];
+      else if (f7 === 0) n = names[f3];
+      else if (f7 === 0x20) n = f3 === 0 ? 'sub' : 'sra';
+      return `${n} ${r(rd)}, ${r(rs1)}, ${r(rs2)}`;
+    }
+    case 0x13: {
+      if (f3 === 1) return `slli ${r(rd)}, ${r(rs1)}, ${rs2}`;
+      if (f3 === 5) return `${f7 === 0x20 ? 'srai' : 'srli'} ${r(rd)}, ${r(rs1)}, ${rs2}`;
+      const n = ['addi','?','slti','sltiu','xori','?','ori','andi'][f3];
+      return `${n} ${r(rd)}, ${r(rs1)}, ${iImm}`;
+    }
+    case 0x03: return `${['lb','lh','lw','?','lbu','lhu'][f3]} ${r(rd)}, ${iImm}(${r(rs1)})`;
+    case 0x23: {
+      const sImm = ((w >> 7) & 0x1F) | (((w | 0) >> 25) << 5);
+      return `${['sb','sh','sw'][f3]} ${r(rs2)}, ${sImm}(${r(rs1)})`;
+    }
+    case 0x63: {
+      const bImm = (((w >> 8) & 0xF) << 1) | (((w >> 25) & 0x3F) << 5) | (((w >> 7) & 1) << 11) | ((((w | 0) >> 31)) << 12);
+      return `${['beq','bne','?','?','blt','bge','bltu','bgeu'][f3]} ${r(rs1)}, ${r(rs2)}, 0x${((pc + bImm) >>> 0).toString(16)}`;
+    }
+    case 0x37: return `lui ${r(rd)}, 0x${((w >>> 12)).toString(16)}`;
+    case 0x17: return `auipc ${r(rd)}, 0x${((w >>> 12)).toString(16)}`;
+    case 0x6F: {
+      let j = (((w >> 21) & 0x3FF) << 1) | (((w >> 20) & 1) << 11) | (((w >> 12) & 0xFF) << 12) | ((((w | 0) >> 31)) << 20);
+      return `jal ${r(rd)}, 0x${((pc + j) >>> 0).toString(16)}`;
+    }
+    case 0x67: return `jalr ${r(rd)}, ${iImm}(${r(rs1)})`;
+    case 0x73: return iImm === 1 ? 'ebreak' : 'ecall';
+    default: return `.word 0x${w.toString(16).padStart(8,'0')}`;
+  }
+}
+
+// ---------------- CPU ----------------
+class CPU {
+  constructor(){
+    this.mem = new Uint8Array(MEM_SIZE);
+    this.view = new DataView(this.mem.buffer);
+    this.regs = new Int32Array(32);
+    this.pc = TEXT_BASE;
+    this.halted = false;
+    this.haltReason = '';
+    this.exitCode = null;
+    this.instret = 0;
+    this.onPrint = () => {};
+    this.onReadInt = () => 0;
+    this.lastWrites = [];     // [addr, len] of memory writes in the most recent step
+    this.lastRegWrite = -1;
+  }
+  loadProgram(asmResult){
+    this.mem.fill(0);
+    for (const w of asmResult.words) this.view.setUint32(w.pc, w.word, true);
+    asmResult.dataBytes.forEach((b, i) => { this.mem[DATA_BASE + i] = b; });
+    this.regs.fill(0);
+    this.pc = TEXT_BASE;
+    this.halted = false; this.haltReason = ''; this.exitCode = null; this.instret = 0;
+    this.lastWrites = []; this.lastRegWrite = -1;
+  }
+  fault(msg){ this.halted = true; this.haltReason = msg; }
+  rd(addr, len, signed){
+    if (addr < 0 || addr + len > MEM_SIZE){ this.fault(`memory read fault at 0x${(addr>>>0).toString(16)} (pc=0x${this.pc.toString(16)})`); return 0; }
+    if (len === 1) return signed ? this.view.getInt8(addr) : this.view.getUint8(addr);
+    if (len === 2) return signed ? this.view.getInt16(addr, true) : this.view.getUint16(addr, true);
+    return this.view.getInt32(addr, true);
+  }
+  wr(addr, len, val){
+    if (addr < 0 || addr + len > MEM_SIZE){ this.fault(`memory write fault at 0x${(addr>>>0).toString(16)} (pc=0x${this.pc.toString(16)})`); return; }
+    if (len === 1) this.view.setUint8(addr, val & 0xFF);
+    else if (len === 2) this.view.setUint16(addr, val & 0xFFFF, true);
+    else this.view.setInt32(addr, val | 0, true);
+    this.lastWrites.push([addr, len]);
+  }
+  setReg(i, v){ if (i !== 0){ this.regs[i] = v | 0; this.lastRegWrite = i; } }
+  readCStr(addr){
+    let s = '', a = addr >>> 0, guard = 0;
+    while (a < MEM_SIZE && this.mem[a] !== 0 && guard++ < 65536){ s += String.fromCharCode(this.mem[a]); a++; }
+    return s;
+  }
+  ecall(){
+    const svc = this.regs[17], a0 = this.regs[10];
+    switch (svc){
+      case 1:  this.onPrint(String(a0)); break;
+      case 4:  this.onPrint(this.readCStr(a0)); break;
+      case 5:  { const v = this.onReadInt() | 0; this.setReg(10, v); break; }
+      case 11: this.onPrint(String.fromCharCode(a0 & 0xFF)); break;
+      case 34: this.onPrint('0x' + (a0 >>> 0).toString(16).padStart(8, '0')); break;
+      case 10: this.halted = true; this.haltReason = 'exit'; this.exitCode = 0; break;
+      case 93: this.halted = true; this.haltReason = 'exit'; this.exitCode = a0 | 0; break;
+      default: this.fault(`unknown ecall service ${svc} (a7) at pc=0x${this.pc.toString(16)}`);
+    }
+  }
+  step(){
+    if (this.halted) return;
+    this.lastWrites = []; this.lastRegWrite = -1;
+    const pc = this.pc;
+    if (pc < 0 || pc + 4 > MEM_SIZE || (pc & 3)){ this.fault(`instruction fetch fault at 0x${(pc>>>0).toString(16)}`); return; }
+    const w = this.view.getUint32(pc, true);
+    if (w === 0){ this.fault(`executed a zero word at 0x${pc.toString(16)} (fell off the end of the program?)`); return; }
+    const op = w & 0x7F, rdI = (w >> 7) & 0x1F, f3 = (w >> 12) & 7, rs1 = (w >> 15) & 0x1F, rs2 = (w >> 20) & 0x1F, f7 = (w >> 25) & 0x7F;
+    const x1 = this.regs[rs1] | 0, x2 = this.regs[rs2] | 0;
+    const iImm = (w | 0) >> 20;
+    let nextPC = pc + 4;
+
+    switch (op){
+      case 0x33: { // R
+        let v = 0;
+        if (f7 === 1){ // M extension
+          switch (f3){
+            case 0: v = Math.imul(x1, x2); break;
+            case 1: v = Number((BigInt(x1) * BigInt(x2)) >> 32n) | 0; break;
+            case 2: v = Number((BigInt(x1) * BigInt(x2 >>> 0)) >> 32n) | 0; break;
+            case 3: v = Number((BigInt(x1 >>> 0) * BigInt(x2 >>> 0)) >> 32n) | 0; break;
+            case 4: v = x2 === 0 ? -1 : (x1 === -2147483648 && x2 === -1 ? -2147483648 : (x1 / x2) | 0); break;
+            case 5: v = x2 === 0 ? -1 : Math.floor((x1 >>> 0) / (x2 >>> 0)) | 0; break;
+            case 6: v = x2 === 0 ? x1 : (x1 === -2147483648 && x2 === -1 ? 0 : x1 % x2); break;
+            case 7: v = x2 === 0 ? x1 : ((x1 >>> 0) % (x2 >>> 0)) | 0; break;
+          }
+        } else {
+          switch (f3){
+            case 0: v = f7 === 0x20 ? (x1 - x2) | 0 : (x1 + x2) | 0; break;
+            case 1: v = x1 << (x2 & 31); break;
+            case 2: v = x1 < x2 ? 1 : 0; break;
+            case 3: v = (x1 >>> 0) < (x2 >>> 0) ? 1 : 0; break;
+            case 4: v = x1 ^ x2; break;
+            case 5: v = f7 === 0x20 ? x1 >> (x2 & 31) : x1 >>> (x2 & 31); break;
+            case 6: v = x1 | x2; break;
+            case 7: v = x1 & x2; break;
+          }
+        }
+        this.setReg(rdI, v); break;
+      }
+      case 0x13: { // I ALU
+        let v = 0;
+        switch (f3){
+          case 0: v = (x1 + iImm) | 0; break;
+          case 1: v = x1 << (rs2 & 31); break;
+          case 2: v = x1 < iImm ? 1 : 0; break;
+          case 3: v = (x1 >>> 0) < (iImm >>> 0) ? 1 : 0; break;
+          case 4: v = x1 ^ iImm; break;
+          case 5: v = f7 === 0x20 ? x1 >> (rs2 & 31) : x1 >>> (rs2 & 31); break;
+          case 6: v = x1 | iImm; break;
+          case 7: v = x1 & iImm; break;
+        }
+        this.setReg(rdI, v); break;
+      }
+      case 0x03: { // loads
+        const a = (x1 + iImm) | 0;
+        let v;
+        switch (f3){
+          case 0: v = this.rd(a, 1, true); break;
+          case 1: v = this.rd(a, 2, true); break;
+          case 2: v = this.rd(a, 4, true); break;
+          case 4: v = this.rd(a, 1, false); break;
+          case 5: v = this.rd(a, 2, false); break;
+          default: this.fault(`illegal load funct3=${f3} at 0x${pc.toString(16)}`); return;
+        }
+        if (this.halted) return;
+        this.setReg(rdI, v); break;
+      }
+      case 0x23: { // stores
+        const sImm = ((w >> 7) & 0x1F) | (((w | 0) >> 25) << 5);
+        const a = (x1 + sImm) | 0;
+        if (f3 > 2){ this.fault(`illegal store funct3=${f3} at 0x${pc.toString(16)}`); return; }
+        this.wr(a, f3 === 0 ? 1 : f3 === 1 ? 2 : 4, x2);
+        if (this.halted) return;
+        break;
+      }
+      case 0x63: { // branches
+        const bImm = (((w >> 8) & 0xF) << 1) | (((w >> 25) & 0x3F) << 5) | (((w >> 7) & 1) << 11) | ((((w | 0) >> 31)) << 12);
+        let take = false;
+        switch (f3){
+          case 0: take = x1 === x2; break;
+          case 1: take = x1 !== x2; break;
+          case 4: take = x1 < x2; break;
+          case 5: take = x1 >= x2; break;
+          case 6: take = (x1 >>> 0) < (x2 >>> 0); break;
+          case 7: take = (x1 >>> 0) >= (x2 >>> 0); break;
+          default: this.fault(`illegal branch funct3=${f3}`); return;
+        }
+        if (take) nextPC = (pc + bImm) | 0;
+        break;
+      }
+      case 0x37: this.setReg(rdI, w & 0xFFFFF000); break;       // lui
+      case 0x17: this.setReg(rdI, (pc + (w & 0xFFFFF000)) | 0); break; // auipc
+      case 0x6F: { // jal
+        const j = (((w >> 21) & 0x3FF) << 1) | (((w >> 20) & 1) << 11) | (((w >> 12) & 0xFF) << 12) | ((((w | 0) >> 31)) << 20);
+        this.setReg(rdI, pc + 4);
+        nextPC = (pc + j) | 0;
+        break;
+      }
+      case 0x67: { // jalr
+        const t = (x1 + iImm) & ~1;
+        this.setReg(rdI, pc + 4);
+        nextPC = t;
+        break;
+      }
+      case 0x73:
+        if (iImm === 1){ this.fault(`ebreak at 0x${pc.toString(16)}`); return; }
+        this.ecall();
+        if (this.halted) return;
+        break;
+      default:
+        this.fault(`illegal instruction 0x${w.toString(16).padStart(8,'0')} at 0x${pc.toString(16)}`);
+        return;
+    }
+    this.pc = nextPC >>> 0;
+    this.instret++;
+  }
+}
+
+
+// ============================================================
+// UI
+// ============================================================
+const $ = id => document.getElementById(id);
+const els = {
+  csrc: $('csrc'), consoleEl: $('console'), asmview: $('asmview'), asmedit: $('asmedit'),
+  asmmeta: $('asmmeta'), regs: $('regs'), pcval: $('pcval'), pcdis: $('pcdis'),
+  memdump: $('memdump'), memaddr: $('memaddr'), led: $('led'), statustext: $('statustext'),
+  instret: $('instret'), samples: $('samples'),
+};
+
+const cpu = new CPU();
+let asmText = '';
+let asmResult = null;        // {words, dataBytes, symbols, ...}
+let pcToAsmLine = new Map(); // pc -> 1-based asm source line
+let lineToPC = new Map();    // first pc emitted by an asm line
+let breakpoints = new Set();
+let runTimer = null;
+let buildTimer = null;
+let memBase = DATA_BASE;
+const MEM_ROWS = 24;
+
+cpu.onPrint = s => logOut(s);
+cpu.onReadInt = () => {
+  const v = window.prompt('read_int(): enter an integer');
+  return v === null ? 0 : (parseInt(v, 10) | 0);
+};
+
+// ---------------- console ----------------
+let outSpan = null;
+function logOut(s){
+  if (!outSpan){ outSpan = document.createElement('span'); els.consoleEl.appendChild(outSpan); }
+  outSpan.textContent += s;
+  els.consoleEl.parentElement.scrollTop = els.consoleEl.parentElement.scrollHeight;
+}
+function logLine(s, cls){
+  outSpan = null;
+  const d = document.createElement('div');
+  d.className = cls || 'sys';
+  d.textContent = s;
+  els.consoleEl.appendChild(d);
+  els.consoleEl.parentElement.scrollTop = els.consoleEl.parentElement.scrollHeight;
+}
+$('btnClear').onclick = () => { els.consoleEl.innerHTML = ''; outSpan = null; };
+
+// ---------------- status ----------------
+function setStatus(state, text){
+  els.led.className = 'led ' + state;
+  els.statustext.textContent = text;
+  els.instret.textContent = asmResult ? cpu.instret.toLocaleString() + ' instr' : '';
+  $('btnRun').textContent = runTimer ? 'Pause' : 'Run';
+}
+function refreshStatus(){
+  if (!asmResult){ setStatus('', 'NO PROGRAM'); return; }
+  if (runTimer){ setStatus('running', 'RUNNING'); return; }
+  if (cpu.halted){
+    if (cpu.haltReason === 'exit') setStatus('halted', 'HALTED · exit ' + cpu.exitCode);
+    else setStatus('fault', 'FAULT');
+  } else setStatus('ready', 'READY');
+}
+
+// ---------------- assembly listing ----------------
+function buildLineMaps(){
+  pcToAsmLine = new Map(); lineToPC = new Map();
+  if (!asmResult) return;
+  for (const w of asmResult.words){
+    pcToAsmLine.set(w.pc, w.line);
+    if (!lineToPC.has(w.line)) lineToPC.set(w.line, w.pc);
+  }
+}
+function renderAsm(){
+  const lines = asmText.split('\n');
+  const frag = document.createDocumentFragment();
+  const curLine = pcToAsmLine.has(cpu.pc) ? pcToAsmLine.get(cpu.pc) : -1;
+  lines.forEach((ln, i) => {
+    const n = i + 1;
+    const row = document.createElement('div');
+    row.className = 'aline' + (n === curLine ? ' cur' : '');
+    const gut = document.createElement('span');
+    gut.className = 'gut';
+    const pc = lineToPC.get(n);
+    if (pc !== undefined){
+      gut.textContent = pc.toString(16).padStart(4, '0');
+      if (breakpoints.has(pc)) gut.classList.add('bp');
+      gut.title = 'Toggle breakpoint at 0x' + pc.toString(16);
+      gut.onclick = () => { breakpoints.has(pc) ? breakpoints.delete(pc) : breakpoints.add(pc); renderAsm(); };
+    } else gut.textContent = '';
+    const txt = document.createElement('span');
+    txt.className = 'txt';
+    const hash = ln.indexOf('#');
+    const code = hash >= 0 ? ln.slice(0, hash) : ln;
+    const cmt = hash >= 0 ? ln.slice(hash) : '';
+    if (/^[\w.]+:\s*$/.test(code.trim())){
+      const l = document.createElement('span'); l.className = 'lbl'; l.textContent = code;
+      txt.appendChild(l);
+    } else txt.appendChild(document.createTextNode(code));
+    if (cmt){ const c = document.createElement('span'); c.className = 'cmt'; c.textContent = cmt; txt.appendChild(c); }
+    row.appendChild(gut); row.appendChild(txt);
+    frag.appendChild(row);
+  });
+  els.asmview.innerHTML = '';
+  els.asmview.appendChild(frag);
+  els.asmmeta.textContent = asmResult ? `${asmResult.words.length} instr · ${asmResult.dataSize} data bytes` : '';
+  const cur = els.asmview.querySelector('.cur');
+  if (cur && cur.scrollIntoView) cur.scrollIntoView({block: 'nearest'});
+}
+
+// ---------------- registers ----------------
+let prevRegs = new Int32Array(32);
+function hex8(v){ return (v >>> 0).toString(16).padStart(8, '0'); }
+function renderRegs(){
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < 32; i++){
+    const d = document.createElement('div');
+    d.className = 'reg' + (cpu.regs[i] !== prevRegs[i] ? ' changed' : '');
+    const rn = document.createElement('span'); rn.className = 'rn'; rn.textContent = ABI[i];
+    const rv = document.createElement('span');
+    rv.className = 'rv' + (cpu.regs[i] === 0 ? ' zero' : '');
+    rv.textContent = hex8(cpu.regs[i]);
+    rv.title = i === 0 ? 'x0 is hard-wired to zero' : `x${i} · decimal ${cpu.regs[i]} · click to edit`;
+    if (i !== 0) rv.onclick = () => editValue(rv, cpu.regs[i], v => { cpu.regs[i] = v | 0; renderRegs(); });
+    const rd = document.createElement('span'); rd.className = 'rd'; rd.textContent = cpu.regs[i];
+    d.appendChild(rn); d.appendChild(rv); d.appendChild(rd);
+    frag.appendChild(d);
+  }
+  els.regs.innerHTML = '';
+  els.regs.appendChild(frag);
+  prevRegs = Int32Array.from(cpu.regs);
+  els.pcval.textContent = hex8(cpu.pc);
+  let dis = '';
+  if (cpu.pc + 4 <= MEM_SIZE && !(cpu.pc & 3)){
+    const w = cpu.view.getUint32(cpu.pc, true);
+    if (w) dis = '→ ' + disasm(w, cpu.pc);
+  }
+  els.pcdis.textContent = dis;
+  els.pcval.onclick = () => editValue(els.pcval, cpu.pc, v => { cpu.pc = v >>> 0; renderAll(); });
+}
+function editValue(span, cur, commit){
+  const inp = document.createElement('input');
+  inp.value = '0x' + hex8(cur);
+  span.replaceWith(inp);
+  inp.focus(); inp.select();
+  const done = ok => {
+    if (ok){
+      const t = inp.value.trim();
+      let v;
+      if (/^-?0x[0-9a-fA-F]+$/i.test(t)) v = parseInt(t, 16);
+      else if (/^-?\d+$/.test(t)) v = parseInt(t, 10);
+      if (v !== undefined && !Number.isNaN(v)) commit(v);
+    }
+    inp.replaceWith(span);
+    renderAll();
+  };
+  inp.onblur = () => done(true);
+  inp.onkeydown = e => {
+    if (e.key === 'Enter') inp.blur();
+    if (e.key === 'Escape'){ inp.onblur = null; done(false); }
+  };
+}
+
+// ---------------- memory ----------------
+function renderMem(){
+  const written = new Set();
+  for (const [a, len] of cpu.lastWrites) for (let k = 0; k < len; k++) written.add(a + k);
+  const sp = cpu.regs[2] >>> 0;
+  const frag = document.createDocumentFragment();
+  const base = Math.min(Math.max(0, memBase & ~0xF), MEM_SIZE - 16);
+  for (let r = 0; r < MEM_ROWS; r++){
+    const rowAddr = base + r * 16;
+    if (rowAddr >= MEM_SIZE) break;
+    const row = document.createElement('div'); row.className = 'mrow';
+    const ma = document.createElement('span'); ma.className = 'ma';
+    ma.textContent = rowAddr.toString(16).padStart(4, '0') + ':';
+    row.appendChild(ma);
+    const mb = document.createElement('span'); mb.className = 'mb';
+    let ascii = '';
+    for (let c = 0; c < 16; c++){
+      const a = rowAddr + c;
+      const b = cpu.mem[a];
+      const cell = document.createElement('span');
+      cell.textContent = b.toString(16).padStart(2, '0') + (c < 15 ? ' ' : '');
+      if (b === 0) cell.classList.add('zb');
+      if (c === 8) cell.classList.add('g8');
+      if (written.has(a)) cell.classList.add('written');
+      if (a === sp && sp < MEM_SIZE) cell.classList.add('sphere');
+      cell.title = `0x${a.toString(16)}${a === sp ? ' ← sp' : ''} · click to edit`;
+      cell.onclick = () => editByte(cell, a);
+      mb.appendChild(cell);
+      ascii += b >= 32 && b < 127 ? String.fromCharCode(b) : '·';
+    }
+    row.appendChild(mb);
+    const mt = document.createElement('span'); mt.className = 'mt'; mt.textContent = ascii;
+    row.appendChild(mt);
+    frag.appendChild(row);
+  }
+  els.memdump.innerHTML = '';
+  els.memdump.appendChild(frag);
+}
+function editByte(cell, addr){
+  const inp = document.createElement('input');
+  inp.className = 'mem-edit';
+  inp.style.width = '30px';
+  inp.maxLength = 2;
+  inp.value = cpu.mem[addr].toString(16).padStart(2, '0');
+  cell.replaceWith(inp);
+  inp.focus(); inp.select();
+  const done = ok => {
+    if (ok && /^[0-9a-fA-F]{1,2}$/.test(inp.value.trim())) cpu.mem[addr] = parseInt(inp.value.trim(), 16);
+    renderMem();
+  };
+  inp.onblur = () => done(true);
+  inp.onkeydown = e => {
+    if (e.key === 'Enter') inp.blur();
+    if (e.key === 'Escape'){ inp.onblur = null; done(false); }
+  };
+}
+els.memaddr.onchange = () => {
+  const t = els.memaddr.value.trim();
+  const v = /^0x/i.test(t) ? parseInt(t, 16) : parseInt(t, 10);
+  if (!Number.isNaN(v)){ memBase = v; renderMem(); }
+};
+document.querySelectorAll('.chip').forEach(ch => {
+  ch.onclick = () => {
+    const k = ch.dataset.go;
+    if (k === 'text') memBase = TEXT_BASE;
+    else if (k === 'data') memBase = DATA_BASE;
+    else if (k === 'sp') memBase = Math.max(0, (cpu.regs[2] >>> 0) - 32);
+    else if (k === 's0') memBase = Math.max(0, (cpu.regs[8] >>> 0) - 64);
+    els.memaddr.value = '0x' + (memBase & ~0xF).toString(16);
+    renderMem();
+  };
+});
+
+function renderAll(){ renderRegs(); renderMem(); renderAsm(); refreshStatus(); }
+
+// ---------------- build / load ----------------
+function build(fromAsmText){
+  stopRun();
+  breakpoints.clear();   // addresses shift between builds
+  try {
+    if (fromAsmText === undefined){
+      asmText = compileC(els.csrc.value);
+    } else {
+      asmText = fromAsmText;
+    }
+    asmResult = assemble(asmText);
+    cpu.loadProgram(asmResult);
+    buildLineMaps();
+    prevRegs.fill(0);
+    logLine(`build ok — ${asmResult.words.length} instructions, ${asmResult.dataSize} data bytes`, 'ok');
+  } catch (e){
+    if (!e.isCompile && !e.isAsm) throw e;
+    asmResult = null;
+    buildLineMaps();
+    const where = e.cline ? ` (C line ${e.cline})` : e.aline ? ` (asm line ${e.aline})` : '';
+    logLine(`build error: ${e.message}${where}`, 'err');
+    if (fromAsmText === undefined){ els.asmview.innerHTML = ''; els.asmmeta.textContent = ''; }
+    setStatus('fault', 'BUILD ERROR');
+    return false;
+  }
+  renderAll();
+  return true;
+}
+
+// ---------------- execution ----------------
+function stepOnce(){
+  if (!asmResult || cpu.halted) return;
+  cpu.step();
+  if (cpu.halted && cpu.haltReason !== 'exit') logLine(cpu.haltReason, 'err');
+  else if (cpu.halted) logLine(`— program exited with code ${cpu.exitCode} after ${cpu.instret.toLocaleString()} instructions —`, 'sys');
+}
+function stopRun(){
+  if (runTimer){ clearInterval(runTimer); cancelAnimationFrame(runTimer.raf || 0); runTimer = null; }
+  refreshStatus();
+}
+function startRun(){
+  if (!asmResult || cpu.halted) return;
+  const rate = +$('speed').value;
+  stopRun();
+  if (rate >= 100000){
+    const tick = () => {
+      let n = 0;
+      while (!cpu.halted && n++ < 400000){
+        cpu.step();
+        if (breakpoints.has(cpu.pc)){ logLine(`breakpoint at 0x${cpu.pc.toString(16)}`, 'sys'); stopAndRender(); return; }
+      }
+      renderAll();
+      if (cpu.halted){ finishRun(); return; }
+      runTimer.raf = requestAnimationFrame(tick);
+    };
+    runTimer = {raf: requestAnimationFrame(tick)};
+  } else {
+    const period = Math.max(8, 1000 / Math.min(rate, 120));
+    const per = Math.max(1, Math.round(rate * period / 1000));
+    runTimer = setInterval(() => {
+      for (let i = 0; i < per && !cpu.halted; i++){
+        cpu.step();
+        if (breakpoints.has(cpu.pc)){ logLine(`breakpoint at 0x${cpu.pc.toString(16)}`, 'sys'); stopAndRender(); return; }
+      }
+      renderAll();
+      if (cpu.halted) finishRun();
+    }, period);
+  }
+  refreshStatus();
+}
+function stopAndRender(){ stopRun(); renderAll(); }
+function finishRun(){
+  stopRun();
+  if (cpu.haltReason === 'exit') logLine(`— program exited with code ${cpu.exitCode} after ${cpu.instret.toLocaleString()} instructions —`, 'sys');
+  else logLine(cpu.haltReason, 'err');
+  renderAll();
+}
+
+$('btnStep').onclick = () => { stopRun(); stepOnce(); renderAll(); };
+$('btnRun').onclick = () => { runTimer ? stopAndRender() : startRun(); };
+$('btnReset').onclick = () => {
+  stopRun();
+  if (asmResult){ cpu.loadProgram(asmResult); prevRegs.fill(0); logLine('machine reset', 'sys'); renderAll(); }
+};
+$('btnBuild').onclick = () => build();
+
+// ---------------- asm editing ----------------
+const btnAsmEdit = $('btnAsmEdit'), btnAsmApply = $('btnAsmApply'), btnAsmCancel = $('btnAsmCancel');
+function setAsmEditing(on){
+  els.asmedit.style.display = on ? 'block' : 'none';
+  els.asmview.style.display = on ? 'none' : 'block';
+  btnAsmEdit.style.display = on ? 'none' : '';
+  btnAsmApply.style.display = on ? '' : 'none';
+  btnAsmCancel.style.display = on ? '' : 'none';
+}
+btnAsmEdit.onclick = () => { els.asmedit.value = asmText; setAsmEditing(true); els.asmedit.focus(); };
+btnAsmCancel.onclick = () => setAsmEditing(false);
+btnAsmApply.onclick = () => {
+  if (build(els.asmedit.value)){
+    setAsmEditing(false);
+    logLine('note: rebuilding from C will overwrite assembly edits', 'sys');
+  }
+};
+
+// ---------------- editor behaviour ----------------
+els.csrc.addEventListener('input', () => {
+  clearTimeout(buildTimer);
+  buildTimer = setTimeout(() => build(), 600);
+});
+els.csrc.addEventListener('keydown', e => {
+  if (e.key === 'Tab'){
+    e.preventDefault();
+    const s = els.csrc.selectionStart;
+    els.csrc.setRangeText('    ', s, els.csrc.selectionEnd, 'end');
+  }
+});
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); build(); }
+  if (e.key === 'F8'){ e.preventDefault(); stopRun(); stepOnce(); renderAll(); }
+});
+
+// ---------------- samples ----------------
+const SAMPLES = {
+'Bubble sort (arrays in .data)': `// Watch the .data segment reorder itself as the sort runs.
+// Memory panel: press the .data chip, then Run at a slow speed.
+
+int data[8] = {42, 7, 19, 3, 88, 1, 64, 23};
+
+void swap(int *a, int *b){
+    int t = *a;
+    *a = *b;
+    *b = t;
+}
+
+int main(){
+    int n = 8;
+    for (int i = 0; i < n - 1; i++)
+        for (int j = 0; j < n - 1 - i; j++)
+            if (data[j] > data[j + 1])
+                swap(&data[j], &data[j + 1]);
+
+    print_str("sorted: ");
+    for (int i = 0; i < n; i++){
+        print_int(data[i]);
+        print_char(' ');
+    }
+    print_char('\\n');
+    return 0;
+}
+`,
+'Recursive Fibonacci (stack frames)': `// Step through this and watch sp/s0 in the register panel,
+// then press the sp chip in the memory panel to see the
+// call frames stacking downward from 0x10000.
+
+int fib(int n){
+    if (n < 2) return n;
+    return fib(n - 1) + fib(n - 2);
+}
+
+int main(){
+    for (int i = 0; i < 11; i++){
+        print_int(fib(i));
+        print_char(' ');
+    }
+    print_char('\\n');
+    return 0;
+}
+`,
+'Pointers and strings': `// char data, pointer arithmetic and the .data segment.
+
+int strlen_(char *s){
+    int n = 0;
+    while (*s++) n++;
+    return n;
+}
+
+void reverse(char *s, int n){
+    char *a = s;
+    char *b = s + n - 1;
+    while (a < b){
+        char t = *a;
+        *a++ = *b;
+        *b-- = t;
+    }
+}
+
+char buf[16];
+
+int main(){
+    char *src = "attestation";
+    int n = strlen_(src);
+    for (int i = 0; i < n; i++) buf[i] = src[i];
+    reverse(buf, n);
+    print_str(buf);
+    print_char('\\n');
+    print_int(n);
+    return 0;
+}
+`,
+'Collatz (read_int input)': `// Reads a starting value from the console prompt.
+
+int main(){
+    int n = read_int();
+    if (n < 1) n = 27;
+    int steps = 0;
+    while (n != 1){
+        print_int(n);
+        print_char(' ');
+        if (n % 2 == 0) n = n / 2;
+        else            n = 3 * n + 1;
+        steps++;
+    }
+    print_str("1\\nsteps: ");
+    print_int(steps);
+    return 0;
+}
+`,
+'Bit tricks (shifts and masks)': `int popcount(int x){
+    int c = 0;
+    while (x){
+        c += x & 1;
+        x = (x >> 1) & 0x7FFFFFFF;   // arithmetic shift, so mask the sign
+    }
+    return c;
+}
+
+int main(){
+    int v = 0xDEAD;
+    print_str("v        = ");  print_int(v);            print_char('\\n');
+    print_str("v >> 4   = ");  print_int(v >> 4);       print_char('\\n');
+    print_str("v & 0xFF = ");  print_int(v & 0xFF);     print_char('\\n');
+    print_str("popcount = ");  print_int(popcount(v));  print_char('\\n');
+    return 0;
+}
+`,
+};
+for (const name of Object.keys(SAMPLES)){
+  const o = document.createElement('option');
+  o.value = name; o.textContent = name;
+  els.samples.appendChild(o);
+}
+els.samples.onchange = () => { els.csrc.value = SAMPLES[els.samples.value]; build(); };
+
+// ---------------- boot ----------------
+els.csrc.value = SAMPLES['Bubble sort (arrays in .data)'];
+logLine('RV32 Workbench — C is compiled and loaded as you type. Step or Run to execute.', 'sys');
+build();
+</script>
+</body>
+</html>
