@@ -89,22 +89,28 @@ main{
 #console .err{color:var(--red)}
 #console .sys{color:var(--dim)}
 #console .ok{color:var(--green)}
-/* ---------- assembly listing ---------- */
-#asmview{font-size:12px;line-height:1.5;padding:6px 0}
-.aline{display:flex;white-space:pre;min-height:18px}
-.aline .gut{
-  width:64px;flex:none;text-align:right;padding-right:8px;color:var(--faint);cursor:pointer;user-select:none;
-  border-right:1px solid var(--line2);position:relative;
+/* ---------- assembly editor (gutter + highlighted overlay) ---------- */
+.asm-wrap{display:flex;overflow:hidden}
+#asmgut{width:64px;flex:none;overflow:hidden;background:var(--bg);border-right:1px solid var(--line2);user-select:none}
+#asmgutin{padding:10px 0}
+.gl{height:18px;line-height:18px;font-size:12px;text-align:right;padding-right:8px;color:var(--faint);position:relative;white-space:pre}
+.gl.haspc{cursor:pointer}
+.gl.haspc:hover{color:var(--dim)}
+.gl.bp::before{content:'';position:absolute;left:5px;top:50%;transform:translateY(-50%);width:7px;height:7px;border-radius:50%;background:var(--red)}
+.gl.cur{color:var(--cyan)}
+.asm-area{position:relative;flex:1;min-width:0}
+#ahl,#asmedit{
+  position:absolute;inset:0;width:100%;height:100%;margin:0;border:0;
+  font-family:var(--mono);font-size:12px;line-height:18px;tab-size:8;
+  padding:10px 14px;white-space:pre;background:transparent;
 }
-.aline .gut:hover{color:var(--dim)}
-.aline .gut.bp::before{content:'';position:absolute;left:5px;top:50%;transform:translateY(-50%);width:7px;height:7px;border-radius:50%;background:var(--red)}
-.aline .txt{padding-left:10px;color:var(--text)}
-.aline .txt .cmt{color:var(--faint)}
-.aline .txt .lbl{color:var(--cyan)}
-.aline.cur{background:rgba(98,207,221,.10)}
-.aline.cur .gut{color:var(--cyan)}
-.aline.cur .txt::before{content:'▸';color:var(--cyan);margin-right:0;position:absolute;margin-left:-9px}
-#asmedit{width:100%;height:100%;resize:none;border:0;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12px;line-height:1.5;padding:10px 14px;display:none}
+#ahl{overflow:hidden;color:var(--text)}
+#ahl code{font:inherit}
+#ahl .lbl{color:var(--cyan)}
+#asmedit{resize:none;color:transparent;caret-color:var(--text);overflow:auto}
+#asmedit::selection{background:rgba(98,207,221,.28)}
+#asmcur{position:absolute;left:0;height:18px;min-width:100%;background:rgba(98,207,221,.10);display:none}
+.tok-reg{color:#8fb5c9}
 /* ---------- registers: the readout ---------- */
 #regs{
   display:grid;grid-template-columns:repeat(2,1fr);gap:0;padding:8px 10px;
@@ -219,16 +225,15 @@ footer span b{color:var(--dim);font-weight:500}
     <div class="panel" style="flex:1">
       <div class="panel-head">
         <span class="panel-title">ASSEMBLY</span>
+        <span class="meta">editable · re-assembles as you type</span>
         <span class="meta" id="asmmeta"></span>
-        <div class="right">
-          <button id="btnAsmEdit">Edit</button>
-          <button id="btnAsmApply" style="display:none">Assemble</button>
-          <button id="btnAsmCancel" style="display:none">Cancel</button>
-        </div>
       </div>
-      <div class="panel-body">
-        <div id="asmview"></div>
-        <textarea id="asmedit" spellcheck="false"></textarea>
+      <div class="panel-body asm-wrap">
+        <div id="asmgut"><div id="asmgutin"></div></div>
+        <div class="asm-area">
+          <pre id="ahl" aria-hidden="true"><span id="asmcur"></span><code id="ahlcode"></code></pre>
+          <textarea id="asmedit" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+        </div>
       </div>
     </div>
   </div>
@@ -1593,7 +1598,8 @@ class CPU {
 // ============================================================
 const $ = id => document.getElementById(id);
 const els = {
-  csrc: $('csrc'), consoleEl: $('console'), asmview: $('asmview'), asmedit: $('asmedit'),
+  csrc: $('csrc'), consoleEl: $('console'), asmedit: $('asmedit'),
+  asmgut: $('asmgut'), asmgutin: $('asmgutin'),
   asmmeta: $('asmmeta'), regs: $('regs'), pcval: $('pcval'), pcdis: $('pcdis'),
   memdump: $('memdump'), memaddr: $('memaddr'), led: $('led'), statustext: $('statustext'),
   instret: $('instret'), samples: $('samples'),
@@ -1686,41 +1692,70 @@ function buildLineMaps(){
     if (!lineToPC.has(w.line)) lineToPC.set(w.line, w.pc);
   }
 }
+const ASM_LH = 18, ASM_PAD = 10;   // must match the #ahl/#asmedit line-height and padding
+const ASM_TOKEN_RE = /(#[^\n]*)|(^[ \t]*[A-Za-z_.][\w.]*(?=:))|("(?:[^"\\\n]|\\.)*"?)|((?<![\w.])\.[a-z]+\b)|\b(zero|ra|sp|gp|tp|fp|t[0-6]|s10|s11|s[0-9]|a[0-7]|x3[01]|x[12]?[0-9])\b|(-?\b0[xX][0-9a-fA-F]+\b|-?\b\d+\b)/gm;
+function highlightAsm(src){
+  let out = '', last = 0;
+  src.replace(ASM_TOKEN_RE, (m, cmt, lbl, str, dir, rg, num, idx) => {
+    out += escHtml(src.slice(last, idx));
+    const cls = cmt ? 'tok-c' : lbl ? 'lbl' : str ? 'tok-s' : dir ? 'tok-k' : rg ? 'tok-reg' : 'tok-n';
+    out += `<span class="${cls}">${escHtml(m)}</span>`;
+    last = idx + m.length;
+    return m;
+  });
+  return out + escHtml(src.slice(last));
+}
+function syncAsmScroll(){
+  const p = $('ahl');
+  p.scrollTop = els.asmedit.scrollTop;
+  p.scrollLeft = els.asmedit.scrollLeft;
+  els.asmgut.scrollTop = els.asmedit.scrollTop;
+}
+function renderAHL(){
+  $('ahlcode').innerHTML = highlightAsm(els.asmedit.value) + '\n';
+  syncAsmScroll();
+}
+function setAsmSource(text){
+  if (els.asmedit.value !== text) els.asmedit.value = text;  // guarded: don't reset the caret on no-op
+  renderAHL();
+}
+els.asmedit.addEventListener('scroll', syncAsmScroll);
+
 function renderAsm(){
-  const lines = asmText.split('\n');
-  const frag = document.createDocumentFragment();
+  const lines = els.asmedit.value.split('\n');
   const curLine = pcToAsmLine.has(cpu.pc) ? pcToAsmLine.get(cpu.pc) : -1;
-  lines.forEach((ln, i) => {
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < lines.length; i++){
     const n = i + 1;
-    const row = document.createElement('div');
-    row.className = 'aline' + (n === curLine ? ' cur' : '');
-    const gut = document.createElement('span');
-    gut.className = 'gut';
+    const g = document.createElement('div');
+    g.className = 'gl' + (n === curLine ? ' cur' : '');
     const pc = lineToPC.get(n);
     if (pc !== undefined){
-      gut.textContent = pc.toString(16).padStart(4, '0');
-      if (breakpoints.has(pc)) gut.classList.add('bp');
-      gut.title = 'Toggle breakpoint at 0x' + pc.toString(16);
-      gut.onclick = () => { breakpoints.has(pc) ? breakpoints.delete(pc) : breakpoints.add(pc); renderAsm(); };
-    } else gut.textContent = '';
-    const txt = document.createElement('span');
-    txt.className = 'txt';
-    const hash = ln.indexOf('#');
-    const code = hash >= 0 ? ln.slice(0, hash) : ln;
-    const cmt = hash >= 0 ? ln.slice(hash) : '';
-    if (/^[\w.]+:\s*$/.test(code.trim())){
-      const l = document.createElement('span'); l.className = 'lbl'; l.textContent = code;
-      txt.appendChild(l);
-    } else txt.appendChild(document.createTextNode(code));
-    if (cmt){ const c = document.createElement('span'); c.className = 'cmt'; c.textContent = cmt; txt.appendChild(c); }
-    row.appendChild(gut); row.appendChild(txt);
-    frag.appendChild(row);
-  });
-  els.asmview.innerHTML = '';
-  els.asmview.appendChild(frag);
+      g.textContent = pc.toString(16).padStart(4, '0');
+      g.classList.add('haspc');
+      if (breakpoints.has(pc)) g.classList.add('bp');
+      g.title = 'Toggle breakpoint at 0x' + pc.toString(16);
+      g.onclick = () => { breakpoints.has(pc) ? breakpoints.delete(pc) : breakpoints.add(pc); renderAsm(); };
+    }
+    frag.appendChild(g);
+  }
+  els.asmgutin.innerHTML = '';
+  els.asmgutin.appendChild(frag);
+  const bar = $('asmcur');
+  if (curLine > 0){
+    const top = ASM_PAD + (curLine - 1) * ASM_LH;
+    bar.style.display = 'block';
+    bar.style.top = top + 'px';
+    bar.style.width = els.asmedit.scrollWidth + 'px';
+    // keep the executing line in view while stepping/running, but never while editing
+    if (document.activeElement !== els.asmedit){
+      const ta = els.asmedit;
+      if (top < ta.scrollTop || top + ASM_LH > ta.scrollTop + ta.clientHeight)
+        ta.scrollTop = Math.max(0, top - ta.clientHeight / 2);
+    }
+  } else bar.style.display = 'none';
   els.asmmeta.textContent = asmResult ? `${asmResult.words.length} instr · ${asmResult.dataSize} data bytes` : '';
-  const cur = els.asmview.querySelector('.cur');
-  if (cur && cur.scrollIntoView) cur.scrollIntoView({block: 'nearest'});
+  syncAsmScroll();
 }
 
 // ---------------- registers ----------------
@@ -1864,6 +1899,8 @@ function build(fromAsmText){
     asmResult = assemble(asmText, curISA);
     cpu.loadProgram(asmResult);
     buildLineMaps();
+    setAsmSource(asmText);
+    if (fromAsmText === undefined) asmEdited = false;
     prevRegs.fill(0);
     logLine(`build ok — ${asmResult.words.length} instructions, ${asmResult.dataSize} data bytes`, 'ok');
   } catch (e){
@@ -1872,7 +1909,8 @@ function build(fromAsmText){
     buildLineMaps();
     const where = e.cline ? ` (C line ${e.cline})` : e.aline ? ` (asm line ${e.aline})` : '';
     logLine(`build error: ${e.message}${where}`, 'err');
-    if (fromAsmText === undefined){ els.asmview.innerHTML = ''; els.asmmeta.textContent = ''; }
+    if (fromAsmText === undefined) setAsmSource('');   // stale compiler output; asm edits are kept
+    renderAsm();
     setStatus('fault', 'BUILD ERROR');
     return false;
   }
@@ -1949,32 +1987,29 @@ $('isa').onchange = () => {
 };
 
 // ---------------- asm editing ----------------
-const btnAsmEdit = $('btnAsmEdit'), btnAsmApply = $('btnAsmApply'), btnAsmCancel = $('btnAsmCancel');
-function setAsmEditing(on){
-  els.asmedit.style.display = on ? 'block' : 'none';
-  els.asmview.style.display = on ? 'none' : 'block';
-  btnAsmEdit.style.display = on ? 'none' : '';
-  btnAsmApply.style.display = on ? '' : 'none';
-  btnAsmCancel.style.display = on ? '' : 'none';
-}
-let asmSnapshot = null, asmEditTimer = null;
-btnAsmEdit.onclick = () => { asmSnapshot = asmText; els.asmedit.value = asmText; setAsmEditing(true); els.asmedit.focus(); };
-btnAsmCancel.onclick = () => {
-  clearTimeout(asmEditTimer);
-  if (asmSnapshot !== null && asmText !== asmSnapshot) build(asmSnapshot);  // undo live edits
-  setAsmEditing(false);
-};
-btnAsmApply.onclick = () => {
-  clearTimeout(asmEditTimer);
-  if (build(els.asmedit.value)){
-    setAsmEditing(false);
-    logLine('note: rebuilding from C will overwrite assembly edits', 'sys');
-  }
-};
-// re-assemble as you type, like the C editor
+let asmEditTimer = null;
+let asmEdited = false;   // edits since the last successful C build
 els.asmedit.addEventListener('input', () => {
+  renderAHL();
+  if (!asmEdited){
+    asmEdited = true;
+    logLine('note: rebuilding from C (typing in the C panel or Build) replaces assembly edits', 'sys');
+  }
   clearTimeout(asmEditTimer);
   asmEditTimer = setTimeout(() => build(els.asmedit.value), 600);
+});
+els.asmedit.addEventListener('keydown', e => {
+  if (e.key === 'Tab'){
+    e.preventDefault();
+    const s = els.asmedit.selectionStart;
+    els.asmedit.setRangeText('    ', s, els.asmedit.selectionEnd, 'end');
+    els.asmedit.dispatchEvent(new Event('input'));
+  }
+});
+els.asmgut.addEventListener('wheel', e => {   // scrolling over the gutter scrolls the editor
+  e.preventDefault();
+  els.asmedit.scrollTop += e.deltaY;
+  syncAsmScroll();
 });
 
 // ---------------- editor behaviour ----------------
@@ -1994,7 +2029,8 @@ els.csrc.addEventListener('keydown', e => {
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){
     e.preventDefault();
-    document.activeElement === els.asmedit ? build(els.asmedit.value) : build();
+    if (document.activeElement === els.asmedit){ clearTimeout(asmEditTimer); build(els.asmedit.value); }
+    else build();
   }
   if (e.key === 'F8'){ e.preventDefault(); stopRun(); stepOnce(); renderAll(); }
 });
@@ -2243,7 +2279,6 @@ els.samples.onchange = () => {
     setCSource(s);
     build();
   } else {
-    setAsmEditing(false);
     if (build(s.asm)) logLine('assembly sample loaded — typing in the C panel will rebuild from C and replace it', 'sys');
   }
 };
