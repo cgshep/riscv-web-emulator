@@ -10,7 +10,7 @@
 :root{
   --bg:#14181f; --panel:#1a202a; --panel2:#161c25; --line:#2a3342; --line2:#222b38;
   --text:#c9d2de; --dim:#67738a; --faint:#465063;
-  --amber:#f0b454; --amber-dim:#9a7434; --cyan:#62cfdd; --red:#e2685c; --green:#84c98a;
+  --amber:#f0b454; --amber-dim:#9a7434; --cyan:#62cfdd; --red:#e2685c; --green:#84c98a; --violet:#b48ee0;
   --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
   --disp:'Chakra Petch','IBM Plex Mono',sans-serif;
 }
@@ -66,12 +66,24 @@ main{
 .panel-head .right{margin-left:auto;display:flex;gap:6px;align-items:center}
 .panel-head button{padding:3px 9px;font-size:10.5px}
 .panel-body{flex:1;min-height:0;overflow:auto;position:relative}
-/* ---------- C editor ---------- */
-#csrc{
-  width:100%;height:100%;resize:none;border:0;background:var(--bg);color:var(--text);
-  font-family:var(--mono);font-size:13px;line-height:1.55;padding:10px 14px;tab-size:4;
+/* ---------- C editor (highlighted overlay) ---------- */
+.editor-wrap{overflow:hidden}
+#chl,#csrc{
+  position:absolute;inset:0;width:100%;height:100%;margin:0;border:0;
+  font-family:var(--mono);font-size:13px;line-height:1.55;tab-size:4;
+  padding:10px 14px;white-space:pre;background:transparent;
 }
+#chl{overflow:hidden;pointer-events:none;color:var(--text)}
+#chl code{font:inherit}
+#csrc{resize:none;color:transparent;caret-color:var(--text);overflow:auto}
+#csrc::selection{background:rgba(98,207,221,.28)}
 #csrc::placeholder{color:var(--faint)}
+.tok-c{color:var(--faint);font-style:italic}
+.tok-s{color:var(--green)}
+.tok-n{color:var(--amber)}
+.tok-t{color:var(--cyan)}
+.tok-k{color:var(--violet)}
+.tok-b{color:var(--cyan);font-style:italic}
 /* ---------- console ---------- */
 #console{padding:10px 14px;white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.5;color:var(--text)}
 #console .err{color:var(--red)}
@@ -168,6 +180,11 @@ footer span b{color:var(--dim);font-weight:500}
     <button id="btnStep" title="Execute one instruction (F8)">Step</button>
     <button id="btnRun" title="Run until halt or breakpoint">Run</button>
     <button id="btnReset" title="Reload the program and clear state">Reset</button>
+    <select id="isa" title="ISA extensions accepted by the assembler and CPU">
+      <option value="I">RV32I</option>
+      <option value="IM">RV32IM</option>
+      <option value="IMA" selected>RV32IMA</option>
+    </select>
     <select id="speed" title="Run speed">
       <option value="8">8 instr/s</option>
       <option value="60">60 instr/s</option>
@@ -184,8 +201,9 @@ footer span b{color:var(--dim);font-weight:500}
         <span class="panel-title">C SOURCE</span>
         <span class="meta">rebuilds as you type</span>
       </div>
-      <div class="panel-body">
-        <textarea id="csrc" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+      <div class="panel-body editor-wrap">
+        <pre id="chl" aria-hidden="true"><code id="chlcode"></code></pre>
+        <textarea id="csrc" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
       </div>
     </div>
     <div class="panel" style="flex:1">
@@ -247,7 +265,7 @@ footer span b{color:var(--dim);font-weight:500}
   <span><b>builtins</b> print_int(x) · print_char(c) · print_str(s) · read_int() · exit(n)</span>
   <span><b>memory map</b> .text 0x0000 · .data 0x4000 · stack ↓ from 0x10000</span>
   <span><b>breakpoints</b> click an address in the listing</span>
-  <span><b>ISA</b> RV32IM, little-endian</span>
+  <span><b>ISA</b> <span id="isafoot">RV32IMA</span>, little-endian</span>
 </footer>
 
 <script>
@@ -1095,6 +1113,10 @@ const SHIFTI = { slli:[0,1], srli:[0,5], srai:[0x20,5] };
 const LOADS = { lb:0, lh:1, lw:2, lbu:4, lhu:5 };
 const STORES = { sb:0, sh:1, sw:2 };
 const BRANCH = { beq:0, bne:1, blt:4, bge:5, bltu:6, bgeu:7 };
+// A extension: funct5 values (opcode 0x2F, funct3=2, aq/rl bits left clear)
+const AMO = { 'sc.w':0x03, 'amoadd.w':0x00, 'amoswap.w':0x01, 'amoxor.w':0x04, 'amoor.w':0x08,
+  'amoand.w':0x0C, 'amomin.w':0x10, 'amomax.w':0x14, 'amominu.w':0x18, 'amomaxu.w':0x1C };
+const M_OPS = new Set(['mul','mulh','mulhsu','mulhu','div','divu','rem','remu']);
 
 function splitOperands(rest){
   return rest.length ? rest.split(',').map(s => s.trim()).filter(s => s.length) : [];
@@ -1111,7 +1133,7 @@ function unescapeAsm(s){
 }
 
 // expand one mnemonic into 1..2 concrete records {op, args..., needsSym?}
-function assemble(src){
+function assemble(src, isa = 'IMA'){
   const lines = src.split('\n');
   const items = [];          // {kind:'instr'|'data', ...}
   const syms = new Map();
@@ -1204,6 +1226,8 @@ function assemble(src){
 
   for (const it of items){
     const {op, ops, line, pc} = it;
+    const ext = M_OPS.has(op) ? 'M' : (op === 'lr.w' || op in AMO) ? 'A' : null;
+    if (ext && !isa.includes(ext)) throw AErr(`'${op}' requires the ${ext} extension (current ISA is RV32${isa})`, line);
     const W = [];
     const reg = i => parseReg(ops[i], line);
     const imm = i => parseImm(ops[i], line, syms);
@@ -1237,6 +1261,19 @@ function assemble(src){
     }
     else if (op === 'ecall'){ W.push(encI(0, 0, 0, 0, 0x73)); }
     else if (op === 'ebreak'){ W.push(encI(1, 0, 0, 0, 0x73)); }
+    // ---- A extension ----
+    else if (op === 'lr.w'){
+      need(2);
+      const mo = parseMemOp(ops[1], line);
+      if (mo.off) throw AErr('lr.w takes no offset: lr.w rd, (rs1)', line);
+      W.push(encR(0x02 << 2, 0, mo.reg, 2, reg(0), 0x2F));
+    }
+    else if (op in AMO){
+      need(3);
+      const mo = parseMemOp(ops[2], line);
+      if (mo.off) throw AErr(`${op} takes no offset: ${op} rd, rs2, (rs1)`, line);
+      W.push(encR(AMO[op] << 2, reg(1), mo.reg, 2, reg(0), 0x2F));
+    }
     // ---- pseudo-instructions ----
     else if (op === 'nop'){ W.push(encI(0, 0, 0, 0, 0x13)); }
     else if (op === 'li'){
@@ -1318,6 +1355,13 @@ function disasm(w, pc){
     }
     case 0x67: return `jalr ${r(rd)}, ${iImm}(${r(rs1)})`;
     case 0x73: return iImm === 1 ? 'ebreak' : 'ecall';
+    case 0x2F: {
+      const f5 = (w >>> 27) & 0x1F;
+      const names = {0:'amoadd.w',1:'amoswap.w',2:'lr.w',3:'sc.w',4:'amoxor.w',8:'amoor.w',12:'amoand.w',16:'amomin.w',20:'amomax.w',24:'amominu.w',28:'amomaxu.w'};
+      const n = names[f5];
+      if (!n || f3 !== 2) return `.word 0x${w.toString(16).padStart(8,'0')}`;
+      return f5 === 2 ? `lr.w ${r(rd)}, (${r(rs1)})` : `${n} ${r(rd)}, ${r(rs2)}, (${r(rs1)})`;
+    }
     default: return `.word 0x${w.toString(16).padStart(8,'0')}`;
   }
 }
@@ -1337,6 +1381,8 @@ class CPU {
     this.onReadInt = () => 0;
     this.lastWrites = [];     // [addr, len] of memory writes in the most recent step
     this.lastRegWrite = -1;
+    this.isaM = true; this.isaA = true;
+    this.resValid = false; this.resAddr = -1;   // lr/sc reservation
   }
   loadProgram(asmResult){
     this.mem.fill(0);
@@ -1346,6 +1392,7 @@ class CPU {
     this.pc = TEXT_BASE;
     this.halted = false; this.haltReason = ''; this.exitCode = null; this.instret = 0;
     this.lastWrites = []; this.lastRegWrite = -1;
+    this.resValid = false; this.resAddr = -1;
   }
   fault(msg){ this.halted = true; this.haltReason = msg; }
   rd(addr, len, signed){
@@ -1396,6 +1443,7 @@ class CPU {
       case 0x33: { // R
         let v = 0;
         if (f7 === 1){ // M extension
+          if (!this.isaM){ this.fault(`M-extension instruction at 0x${pc.toString(16)} but the ISA is RV32I`); return; }
           switch (f3){
             case 0: v = Math.imul(x1, x2); break;
             case 1: v = Number((BigInt(x1) * BigInt(x2)) >> 32n) | 0; break;
@@ -1471,6 +1519,46 @@ class CPU {
         if (take) nextPC = (pc + bImm) | 0;
         break;
       }
+      case 0x2F: { // A extension (single hart: lr/sc via a reservation flag)
+        if (!this.isaA){ this.fault(`A-extension instruction at 0x${pc.toString(16)} but the A extension is disabled`); return; }
+        if (f3 !== 2){ this.fault(`illegal atomic funct3=${f3} at 0x${pc.toString(16)}`); return; }
+        const f5 = (w >>> 27) & 0x1F;
+        const a = x1 | 0;
+        if (a & 3){ this.fault(`misaligned atomic access at 0x${(a>>>0).toString(16)} (pc=0x${pc.toString(16)})`); return; }
+        if (f5 === 0x02){           // lr.w
+          const v = this.rd(a, 4, true);
+          if (this.halted) return;
+          this.resValid = true; this.resAddr = a;
+          this.setReg(rdI, v);
+        } else if (f5 === 0x03){    // sc.w
+          if (this.resValid && this.resAddr === a){
+            this.wr(a, 4, x2);
+            if (this.halted) return;
+            this.setReg(rdI, 0);
+          } else this.setReg(rdI, 1);
+          this.resValid = false;
+        } else {                    // amo*.w: rd = old, mem = old OP rs2
+          const old = this.rd(a, 4, true);
+          if (this.halted) return;
+          let nv;
+          switch (f5){
+            case 0x00: nv = (old + x2) | 0; break;
+            case 0x01: nv = x2; break;
+            case 0x04: nv = old ^ x2; break;
+            case 0x08: nv = old | x2; break;
+            case 0x0C: nv = old & x2; break;
+            case 0x10: nv = Math.min(old, x2); break;
+            case 0x14: nv = Math.max(old, x2); break;
+            case 0x18: nv = (old >>> 0) < (x2 >>> 0) ? old : x2; break;
+            case 0x1C: nv = (old >>> 0) > (x2 >>> 0) ? old : x2; break;
+            default: this.fault(`illegal atomic funct5=${f5} at 0x${pc.toString(16)}`); return;
+          }
+          this.wr(a, 4, nv);
+          if (this.halted) return;
+          this.setReg(rdI, old);
+        }
+        break;
+      }
       case 0x37: this.setReg(rdI, w & 0xFFFFF000); break;       // lui
       case 0x17: this.setReg(rdI, (pc + (w & 0xFFFFF000)) | 0); break; // auipc
       case 0x6F: { // jal
@@ -1512,6 +1600,7 @@ const els = {
 };
 
 const cpu = new CPU();
+let curISA = 'IMA';
 let asmText = '';
 let asmResult = null;        // {words, dataBytes, symbols, ...}
 let pcToAsmLine = new Map(); // pc -> 1-based asm source line
@@ -1527,6 +1616,33 @@ cpu.onReadInt = () => {
   const v = window.prompt('read_int(): enter an integer');
   return v === null ? 0 : (parseInt(v, 10) | 0);
 };
+
+// ---------------- C syntax highlighting ----------------
+const C_TOKEN_RE = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?)|(\b0[xX][0-9a-fA-F]+\b|\b\d+\b)|\b(int|char|void)\b|\b(if|else|while|for|return|break|continue|sizeof)\b|\b(print_int|print_str|print_char|read_int|exit)\b/g;
+function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function highlightC(src){
+  let out = '', last = 0;
+  src.replace(C_TOKEN_RE, (m, cmt, str, num, typ, kw, bi, idx) => {
+    out += escHtml(src.slice(last, idx));
+    const cls = cmt ? 'tok-c' : str ? 'tok-s' : num ? 'tok-n' : typ ? 'tok-t' : kw ? 'tok-k' : 'tok-b';
+    out += `<span class="${cls}">${escHtml(m)}</span>`;
+    last = idx + m.length;
+    return m;
+  });
+  return out + escHtml(src.slice(last));
+}
+function syncCHL(){
+  const p = $('chl');
+  p.scrollTop = els.csrc.scrollTop;
+  p.scrollLeft = els.csrc.scrollLeft;
+}
+function renderCHL(){
+  // trailing newline keeps the overlay's scroll extent >= the textarea's
+  $('chlcode').innerHTML = highlightC(els.csrc.value) + '\n';
+  syncCHL();
+}
+function setCSource(text){ els.csrc.value = text; renderCHL(); }
+els.csrc.addEventListener('scroll', syncCHL);
 
 // ---------------- console ----------------
 let outSpan = null;
@@ -1745,7 +1861,7 @@ function build(fromAsmText){
     } else {
       asmText = fromAsmText;
     }
-    asmResult = assemble(asmText);
+    asmResult = assemble(asmText, curISA);
     cpu.loadProgram(asmResult);
     buildLineMaps();
     prevRegs.fill(0);
@@ -1821,6 +1937,17 @@ $('btnReset').onclick = () => {
 };
 $('btnBuild').onclick = () => build();
 
+// ---------------- ISA selection ----------------
+$('isa').onchange = () => {
+  curISA = $('isa').value;
+  cpu.isaM = curISA.includes('M');
+  cpu.isaA = curISA.includes('A');
+  $('isafoot').textContent = 'RV32' + curISA;
+  logLine(`ISA set to RV32${curISA}`, 'sys');
+  // re-assemble whatever is currently loaded (preserves assembly edits)
+  if (asmText) build(asmText); else build();
+};
+
 // ---------------- asm editing ----------------
 const btnAsmEdit = $('btnAsmEdit'), btnAsmApply = $('btnAsmApply'), btnAsmCancel = $('btnAsmCancel');
 function setAsmEditing(on){
@@ -1830,17 +1957,29 @@ function setAsmEditing(on){
   btnAsmApply.style.display = on ? '' : 'none';
   btnAsmCancel.style.display = on ? '' : 'none';
 }
-btnAsmEdit.onclick = () => { els.asmedit.value = asmText; setAsmEditing(true); els.asmedit.focus(); };
-btnAsmCancel.onclick = () => setAsmEditing(false);
+let asmSnapshot = null, asmEditTimer = null;
+btnAsmEdit.onclick = () => { asmSnapshot = asmText; els.asmedit.value = asmText; setAsmEditing(true); els.asmedit.focus(); };
+btnAsmCancel.onclick = () => {
+  clearTimeout(asmEditTimer);
+  if (asmSnapshot !== null && asmText !== asmSnapshot) build(asmSnapshot);  // undo live edits
+  setAsmEditing(false);
+};
 btnAsmApply.onclick = () => {
+  clearTimeout(asmEditTimer);
   if (build(els.asmedit.value)){
     setAsmEditing(false);
     logLine('note: rebuilding from C will overwrite assembly edits', 'sys');
   }
 };
+// re-assemble as you type, like the C editor
+els.asmedit.addEventListener('input', () => {
+  clearTimeout(asmEditTimer);
+  asmEditTimer = setTimeout(() => build(els.asmedit.value), 600);
+});
 
 // ---------------- editor behaviour ----------------
 els.csrc.addEventListener('input', () => {
+  renderCHL();
   clearTimeout(buildTimer);
   buildTimer = setTimeout(() => build(), 600);
 });
@@ -1849,10 +1988,14 @@ els.csrc.addEventListener('keydown', e => {
     e.preventDefault();
     const s = els.csrc.selectionStart;
     els.csrc.setRangeText('    ', s, els.csrc.selectionEnd, 'end');
+    els.csrc.dispatchEvent(new Event('input'));
   }
 });
 document.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); build(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){
+    e.preventDefault();
+    document.activeElement === els.asmedit ? build(els.asmedit.value) : build();
+  }
   if (e.key === 'F8'){ e.preventDefault(); stopRun(); stepOnce(); renderAll(); }
 });
 
@@ -1970,16 +2113,143 @@ int main(){
     return 0;
 }
 `,
+'Sieve of Eratosthenes': `// Primes below 100. Watch is_comp[] fill in via the .data chip.
+
+int is_comp[100];
+
+int main(){
+    int limit = 100;
+    for (int p = 2; p < limit; p++){
+        if (!is_comp[p]){
+            print_int(p);
+            print_char(' ');
+            for (int m = p * p; m < limit; m += p)
+                is_comp[m] = 1;
+        }
+    }
+    print_char('\\n');
+    return 0;
+}
+`,
+'GCD and LCM (Euclid)': `int gcd(int a, int b){
+    while (b){
+        int t = a % b;
+        a = b;
+        b = t;
+    }
+    return a;
+}
+
+int lcm(int a, int b){
+    return a / gcd(a, b) * b;
+}
+
+int main(){
+    print_str("gcd(1071, 462) = "); print_int(gcd(1071, 462)); print_char('\\n');
+    print_str("gcd(252, 105)  = "); print_int(gcd(252, 105));  print_char('\\n');
+    print_str("lcm(21, 6)     = "); print_int(lcm(21, 6));     print_char('\\n');
+    return 0;
+}
+`,
+'Towers of Hanoi (recursion)': `// Pegs are passed around as character codes.
+
+int moves;
+
+void hanoi(int n, int from, int to, int via){
+    if (n == 0) return;
+    hanoi(n - 1, from, via, to);
+    print_char(from); print_str(" -> "); print_char(to); print_char('\\n');
+    moves++;
+    hanoi(n - 1, via, to, from);
+}
+
+int main(){
+    hanoi(4, 'A', 'C', 'B');
+    print_str("moves: ");
+    print_int(moves);
+    print_char('\\n');
+    return 0;
+}
+`,
+'Shift-add multiply (RV32I-safe)': `// Software multiply using only shifts and adds: this sample
+// still builds and runs with the ISA selector set to plain RV32I,
+// because it never uses the * / % operators (which emit mul/div).
+
+int mul_soft(int a, int b){
+    int r = 0;
+    while (b){
+        if (b & 1) r += a;
+        a <<= 1;
+        b = (b >> 1) & 0x7FFFFFFF;
+    }
+    return r;
+}
+
+int main(){
+    print_str("123 * 45  = "); print_int(mul_soft(123, 45));  print_char('\\n');
+    print_str("256 * 256 = "); print_int(mul_soft(256, 256)); print_char('\\n');
+    print_str("7 * -9    = "); print_int(mul_soft(-9, 7));    print_char('\\n');
+    return 0;
+}
+`,
+'Atomics: amoadd + lr/sc (RV32A asm)': {asm: `# RV32A demo — requires the ISA selector to be on RV32IMA.
+# Loaded straight into the assembler; the C panel is not used.
+
+.text
+_start:
+        li   sp, 0x10000
+        la   s1, counter
+        li   s2, 10                 # iterations
+        li   s3, 1
+inc_loop:
+        amoadd.w t0, s3, (s1)       # counter += 1 atomically; t0 = old value
+        addi s2, s2, -1
+        bnez s2, inc_loop
+        lw   a0, 0(s1)
+        li   a7, 1
+        ecall                       # prints 10
+        li   a0, 10
+        li   a7, 11
+        ecall                       # newline
+
+# compare-and-swap with lr/sc: set counter to 99 only if it is 10
+cas:
+        lr.w t0, (s1)               # load-reserved
+        li   t1, 10
+        bne  t0, t1, done           # value changed -> give up
+        li   t2, 99
+        sc.w t3, t2, (s1)           # store-conditional (t3 = 0 on success)
+        bnez t3, cas                # reservation lost -> retry
+        lw   a0, 0(s1)
+        li   a7, 1
+        ecall                       # prints 99
+done:
+        li   a0, 0
+        li   a7, 93
+        ecall                       # exit(0)
+
+.data
+counter: .word 0
+`},
 };
 for (const name of Object.keys(SAMPLES)){
   const o = document.createElement('option');
   o.value = name; o.textContent = name;
   els.samples.appendChild(o);
 }
-els.samples.onchange = () => { els.csrc.value = SAMPLES[els.samples.value]; build(); };
+els.samples.onchange = () => {
+  const s = SAMPLES[els.samples.value];
+  if (typeof s === 'string'){
+    setCSource(s);
+    build();
+  } else {
+    setAsmEditing(false);
+    if (build(s.asm)) logLine('assembly sample loaded — typing in the C panel will rebuild from C and replace it', 'sys');
+  }
+};
 
 // ---------------- boot ----------------
-els.csrc.value = SAMPLES['Bubble sort (arrays in .data)'];
+setCSource(SAMPLES['Bubble sort (arrays in .data)']);
 logLine('RV32 Workbench — C is compiled and loaded as you type. Step or Run to execute.', 'sys');
 build();
 </script>
