@@ -157,6 +157,13 @@ main{
   .reg.changed,.mb span.written{animation:none}
   .led.running{animation:none}
 }
+/* ---------- virtual display ---------- */
+.dispbody{display:flex;align-items:center;justify-content:center;background:#05070a;padding:10px;min-height:0;overflow:hidden}
+#screen{
+  image-rendering:pixelated;image-rendering:crisp-edges;
+  width:100%;height:100%;object-fit:contain;background:#000;
+  box-shadow:0 0 18px rgba(98,207,221,.07);
+}
 /* ---------- responsive ---------- */
 @media (max-width:1080px){
   main{grid-template-columns:1fr 1fr}
@@ -222,7 +229,7 @@ footer span b{color:var(--dim);font-weight:500}
   </div>
 
   <div class="col col2">
-    <div class="panel" style="flex:1">
+    <div class="panel" style="flex:1.6">
       <div class="panel-head">
         <span class="panel-title">ASSEMBLY</span>
         <span class="meta">editable · re-assembles as you type</span>
@@ -234,6 +241,16 @@ footer span b{color:var(--dim);font-weight:500}
           <pre id="ahl" aria-hidden="true"><span id="asmcur"></span><code id="ahlcode"></code></pre>
           <textarea id="asmedit" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
         </div>
+      </div>
+    </div>
+    <div class="panel" style="flex:1">
+      <div class="panel-head">
+        <span class="panel-title">DISPLAY</span>
+        <span class="meta">64×64 · RGB332 · framebuffer @ 0x10000</span>
+        <div class="right"><button id="btnDispClear">Clear</button></div>
+      </div>
+      <div class="panel-body dispbody">
+        <canvas id="screen" width="64" height="64"></canvas>
       </div>
     </div>
   </div>
@@ -270,6 +287,7 @@ footer span b{color:var(--dim);font-weight:500}
   <span><b>builtins</b> print_int(x) · print_char(c) · print_str(s) · read_int() · exit(n)</span>
   <span><b>memory map</b> .text 0x0000 · .data 0x4000 · stack ↓ from 0x10000</span>
   <span><b>breakpoints</b> click an address in the listing</span>
+  <span><b>display</b> 64×64 RGB332 @ 0x10000 · fill/clear @ 0x11000</span>
   <span><b>ISA</b> <span id="isafoot">RV32IMA</span>, little-endian</span>
 </footer>
 
@@ -1073,6 +1091,13 @@ const TEXT_BASE = 0x0000;
 const DATA_BASE = 0x4000;
 const MEM_SIZE  = 0x10000;   // 64 KiB; stack grows down from the top
 
+// Memory-mapped virtual display (MMIO window sitting just above RAM)
+const DISP_W = 64, DISP_H = 64;
+const DISP_FB = MEM_SIZE;                    // 0x10000  framebuffer base
+const DISP_FB_SIZE = DISP_W * DISP_H;        // 4096 bytes, one per pixel (RGB332)
+const DISP_CTL = DISP_FB + DISP_FB_SIZE;     // 0x11000  write a byte -> flood-fill / clear
+const DISP_TOP = DISP_CTL + 4;               // 0x11004  end of MMIO window (exclusive)
+
 const REG_NAMES = {};
 (function(){
   const abi = ['zero','ra','sp','gp','tp','t0','t1','t2','s0','s1',
@@ -1388,6 +1413,8 @@ class CPU {
     this.lastRegWrite = -1;
     this.isaM = true; this.isaA = true;
     this.resValid = false; this.resAddr = -1;   // lr/sc reservation
+    this.disp = new Uint8Array(DISP_FB_SIZE);   // memory-mapped framebuffer
+    this.dispDirty = true;                       // redraw the canvas on the next render
   }
   loadProgram(asmResult){
     this.mem.fill(0);
@@ -1398,15 +1425,32 @@ class CPU {
     this.halted = false; this.haltReason = ''; this.exitCode = null; this.instret = 0;
     this.lastWrites = []; this.lastRegWrite = -1;
     this.resValid = false; this.resAddr = -1;
+    this.disp.fill(0); this.dispDirty = true;
   }
   fault(msg){ this.halted = true; this.haltReason = msg; }
   rd(addr, len, signed){
+    if (addr >= DISP_FB && addr < DISP_TOP){            // memory-mapped display
+      let v = 0;
+      if (addr < DISP_CTL)
+        for (let k = 0; k < len; k++){ const off = addr - DISP_FB + k; if (off < DISP_FB_SIZE) v |= this.disp[off] << (8 * k); }
+      if (signed){ if (len === 1) v = (v << 24) >> 24; else if (len === 2) v = (v << 16) >> 16; }
+      return v | 0;
+    }
     if (addr < 0 || addr + len > MEM_SIZE){ this.fault(`memory read fault at 0x${(addr>>>0).toString(16)} (pc=0x${this.pc.toString(16)})`); return 0; }
     if (len === 1) return signed ? this.view.getInt8(addr) : this.view.getUint8(addr);
     if (len === 2) return signed ? this.view.getInt16(addr, true) : this.view.getUint16(addr, true);
     return this.view.getInt32(addr, true);
   }
   wr(addr, len, val){
+    if (addr >= DISP_FB && addr < DISP_TOP){            // memory-mapped display
+      if (addr < DISP_CTL){
+        for (let k = 0; k < len; k++){ const off = addr - DISP_FB + k; if (off < DISP_FB_SIZE) this.disp[off] = (val >>> (8 * k)) & 0xFF; }
+      } else {
+        this.disp.fill(val & 0xFF);                     // control register: flood-fill / clear
+      }
+      this.dispDirty = true;
+      return;
+    }
     if (addr < 0 || addr + len > MEM_SIZE){ this.fault(`memory write fault at 0x${(addr>>>0).toString(16)} (pc=0x${this.pc.toString(16)})`); return; }
     if (len === 1) this.view.setUint8(addr, val & 0xFF);
     else if (len === 2) this.view.setUint16(addr, val & 0xFFFF, true);
@@ -1884,7 +1928,31 @@ document.querySelectorAll('.chip').forEach(ch => {
   };
 });
 
-function renderAll(){ renderRegs(); renderMem(); renderAsm(); refreshStatus(); }
+// ---------------- virtual display (memory-mapped framebuffer) ----------------
+const scr = $('screen');
+const sctx = scr.getContext('2d');
+const dispImage = sctx.createImageData(DISP_W, DISP_H);
+const PAL332 = (() => {                  // RGB332 colour byte -> RGB
+  const p = new Uint8Array(256 * 3);
+  for (let v = 0; v < 256; v++){
+    p[v*3]   = Math.round(((v >> 5) & 7) * 255 / 7);
+    p[v*3+1] = Math.round(((v >> 2) & 7) * 255 / 7);
+    p[v*3+2] = Math.round((v & 3) * 255 / 3);
+  }
+  return p;
+})();
+function renderDisp(){
+  const fb = cpu.disp, d = dispImage.data;
+  for (let i = 0, j = 0; i < DISP_FB_SIZE; i++, j += 4){
+    const c = fb[i] * 3;
+    d[j] = PAL332[c]; d[j+1] = PAL332[c+1]; d[j+2] = PAL332[c+2]; d[j+3] = 255;
+  }
+  sctx.putImageData(dispImage, 0, 0);
+  cpu.dispDirty = false;
+}
+$('btnDispClear').onclick = () => { cpu.disp.fill(0); renderDisp(); };
+
+function renderAll(){ renderRegs(); renderMem(); renderAsm(); refreshStatus(); if (cpu.dispDirty) renderDisp(); }
 
 // ---------------- build / load ----------------
 function build(fromAsmText){
@@ -2037,6 +2105,85 @@ document.addEventListener('keydown', e => {
 
 // ---------------- samples ----------------
 const SAMPLES = {
+'Display: RGB332 colour gradient': `// The DISPLAY panel is a 64x64 memory-mapped screen.
+// One byte per pixel in RGB332 format:  bits  RRR GGG BB.
+//   framebuffer base   0x10000   (write a colour byte per pixel)
+//   control register   0x11000   (write a byte to flood-fill / clear)
+// Press Run to draw it.
+
+int main(){
+    char *fb  = 0x10000;          // pixel (x,y) lives at fb[y*64 + x]
+    int  *ctl = 0x11000;
+
+    *ctl = 0;                     // clear the whole screen to black
+
+    for (int y = 0; y < 64; y++){
+        for (int x = 0; x < 64; x++){
+            int r = x >> 3;                       // 0..7  red   (across)
+            int g = y >> 3;                       // 0..7  green (down)
+            int b = (x + y) >> 4;                 // 0..7  blue  (diagonal)
+            fb[y * 64 + x] = (r << 5) | (g << 2) | (b & 3);
+        }
+    }
+    print_str("drew a 64x64 RGB332 gradient\\n");
+    return 0;
+}
+`,
+'Display: bouncing ball (animated)': `// Watch the DISPLAY update live while the program runs.
+// Run at 3k instr/s (or slower) to see the ball move around.
+
+int main(){
+    char *fb  = 0x10000;
+    int  *ctl = 0x11000;
+    int x = 12, y = 8, dx = 1, dy = 1;
+
+    for (int frame = 0; frame < 4000; frame++){
+        x += dx; y += dy;
+        if (x < 1)  { x = 1;  dx = -dx; }
+        if (x > 60) { x = 60; dx = -dx; }
+        if (y < 1)  { y = 1;  dy = -dy; }
+        if (y > 60) { y = 60; dy = -dy; }
+
+        *ctl = 0x01;                              // clear to dark blue (B=1)
+        for (int yy = 0; yy < 3; yy++)            // draw a 3x3 yellow ball
+            for (int xx = 0; xx < 3; xx++)
+                fb[(y + yy) * 64 + (x + xx)] = 0xFC;   // R=7,G=7,B=0
+    }
+    return 0;
+}
+`,
+'Display: Mandelbrot set (fixed-point)': `// A Mandelbrot fractal drawn into the virtual display using
+// Q10 fixed-point maths (1.0 == 1024). Needs RV32IM (the default).
+// It is compute-heavy (~7M instructions) -- set speed to Full speed.
+
+int main(){
+    char *fb  = 0x10000;
+    int  *ctl = 0x11000;
+    *ctl = 0;
+
+    for (int py = 0; py < 64; py++){
+        for (int px = 0; px < 64; px++){
+            int cx = px * 48 - 2048;          // ~ -2.0 .. 1.0  in Q10
+            int cy = py * 32 - 1024;          // ~ -1.0 .. 1.0  in Q10
+            int zx = 0, zy = 0, i = 0;
+            while (i < 32){
+                int zx2 = (zx * zx) >> 10;
+                int zy2 = (zy * zy) >> 10;
+                if (zx2 + zy2 > 4096) break;  // |z|^2 > 4  -> escaped
+                int xt = zx2 - zy2 + cx;
+                zy = ((zx * zy) >> 9) + cy;   // 2*zx*zy
+                zx = xt;
+                i++;
+            }
+            // colour by escape time; points inside the set stay black
+            int c = i >= 32 ? 0 : ((i << 4) & 0xE0) | ((i << 1) & 0x1C) | (i & 3);
+            fb[py * 64 + px] = c;
+        }
+    }
+    print_str("mandelbrot rendered\\n");
+    return 0;
+}
+`,
 'Bubble sort (arrays in .data)': `// Watch the .data segment reorder itself as the sort runs.
 // Memory panel: press the .data chip, then Run at a slow speed.
 
@@ -2284,7 +2431,7 @@ els.samples.onchange = () => {
 };
 
 // ---------------- boot ----------------
-setCSource(SAMPLES['Bubble sort (arrays in .data)']);
+setCSource(SAMPLES['Display: RGB332 colour gradient']);
 logLine('RV32 Workbench — C is compiled and loaded as you type. Step or Run to execute.', 'sys');
 build();
 </script>
