@@ -4,9 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RV32 Workbench — C → RISC-V emulator</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+/* self-hosted fonts (latin subset) — the workbench is fully usable offline */
+@font-face{font-family:'Chakra Petch';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/chakra-petch-400.woff2) format('woff2')}
+@font-face{font-family:'Chakra Petch';font-style:normal;font-weight:500;font-display:swap;src:url(fonts/chakra-petch-500.woff2) format('woff2')}
+@font-face{font-family:'Chakra Petch';font-style:normal;font-weight:600;font-display:swap;src:url(fonts/chakra-petch-600.woff2) format('woff2')}
+@font-face{font-family:'Chakra Petch';font-style:normal;font-weight:700;font-display:swap;src:url(fonts/chakra-petch-700.woff2) format('woff2')}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/ibm-plex-mono-400.woff2) format('woff2')}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;font-display:swap;src:url(fonts/ibm-plex-mono-500.woff2) format('woff2')}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:600;font-display:swap;src:url(fonts/ibm-plex-mono-600.woff2) format('woff2')}
 :root{
   color-scheme:dark;
   --bg:#14181f; --panel:#1a202a; --panel2:#161c25; --line:#2a3342; --line2:#222b38;
@@ -58,6 +64,7 @@ header{
 .led.running{background:var(--cyan);box-shadow:0 0 6px var(--cyan);animation:pulse 1s infinite}
 .led.halted{background:var(--amber);box-shadow:0 0 6px var(--amber)}
 .led.fault{background:var(--red);box-shadow:0 0 6px var(--red)}
+.led.waiting{background:var(--violet);box-shadow:0 0 6px var(--violet)}
 @keyframes pulse{50%{opacity:.45}}
 .statustext{font-family:var(--disp);font-size:11px;letter-spacing:.12em;color:var(--dim);min-width:118px}
 .instret{font-size:11px;color:var(--faint)}
@@ -99,7 +106,7 @@ main{
   padding:10px 14px;white-space:pre;background:transparent;
 }
 #chl{overflow:hidden;pointer-events:none;color:var(--text)}
-#chl code{font:inherit}
+#chl code{font:inherit;display:block;will-change:transform}
 #csrc{resize:none;color:transparent;caret-color:var(--text);overflow:auto}
 #csrc::selection{background:var(--sel)}
 #csrc::placeholder{color:var(--faint)}
@@ -114,6 +121,12 @@ main{
 #console .err{color:var(--red)}
 #console .sys{color:var(--dim)}
 #console .ok{color:var(--green)}
+.conin{display:flex;gap:6px;align-items:center;padding:2px 0}
+.conin span{color:var(--cyan)}
+.conin input{
+  font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--text);
+  border:1px solid var(--line);border-radius:2px;padding:2px 6px;width:130px;
+}
 /* ---------- assembly editor (gutter + highlighted overlay) ---------- */
 .asm-wrap{display:flex;overflow:hidden}
 #asmgut{width:64px;flex:none;overflow:hidden;background:var(--bg);border-right:1px solid var(--line2);user-select:none}
@@ -130,7 +143,7 @@ main{
   padding:10px 14px;white-space:pre;background:transparent;
 }
 #ahl{overflow:hidden;color:var(--text)}
-#ahl code{font:inherit}
+#ahl code{font:inherit;display:block;will-change:transform}
 #ahl .lbl{color:var(--cyan)}
 #asmedit{resize:none;color:transparent;caret-color:var(--text);overflow:auto}
 #asmedit::selection{background:var(--sel)}
@@ -207,8 +220,8 @@ footer span b{color:var(--dim);font-weight:500}
 <header>
   <div class="brand">RV32 <b>WORKBENCH</b></div>
   <div class="statusbox">
-    <div class="led" id="led"></div>
-    <div class="statustext" id="statustext">NO PROGRAM</div>
+    <div class="led" id="led" aria-hidden="true"></div>
+    <div class="statustext" id="statustext" role="status" aria-live="polite">NO PROGRAM</div>
     <div class="instret" id="instret"></div>
   </div>
   <div class="spacer"></div>
@@ -218,6 +231,7 @@ footer span b{color:var(--dim);font-weight:500}
     <button id="btnStep" title="Execute one instruction (F8)">Step</button>
     <button id="btnRun" title="Run until halt or breakpoint">Run</button>
     <button id="btnReset" title="Reload the program and clear state">Reset</button>
+    <button id="btnShare" title="Copy a shareable link to this program">Share</button>
     <select id="isa" title="ISA extensions accepted by the assembler and CPU">
       <option value="I">RV32I</option>
       <option value="IM">RV32IM</option>
@@ -249,7 +263,7 @@ footer span b{color:var(--dim);font-weight:500}
       </div>
       <div class="panel-body editor-wrap">
         <pre id="chl" aria-hidden="true"><code id="chlcode"></code></pre>
-        <textarea id="csrc" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+        <textarea id="csrc" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="C source editor"></textarea>
       </div>
     </div>
     <div class="panel" style="flex:1">
@@ -257,7 +271,7 @@ footer span b{color:var(--dim);font-weight:500}
         <span class="panel-title">CONSOLE</span>
         <div class="right"><button id="btnClear">Clear</button></div>
       </div>
-      <div class="panel-body"><div id="console"></div></div>
+      <div class="panel-body"><div id="console" role="log" aria-live="polite"></div></div>
     </div>
   </div>
 
@@ -272,7 +286,7 @@ footer span b{color:var(--dim);font-weight:500}
         <div id="asmgut"><div id="asmgutin"></div></div>
         <div class="asm-area">
           <pre id="ahl" aria-hidden="true"><span id="asmcur"></span><code id="ahlcode"></code></pre>
-          <textarea id="asmedit" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+          <textarea id="asmedit" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Assembly editor"></textarea>
         </div>
       </div>
     </div>
@@ -283,7 +297,7 @@ footer span b{color:var(--dim);font-weight:500}
         <div class="right"><button id="btnDispClear">Clear</button></div>
       </div>
       <div class="panel-body dispbody">
-        <canvas id="screen" width="64" height="64"></canvas>
+        <canvas id="screen" width="64" height="64" role="img" aria-label="64 by 64 pixel virtual display"></canvas>
       </div>
     </div>
   </div>
@@ -305,7 +319,7 @@ footer span b{color:var(--dim);font-weight:500}
         <span class="meta">click a byte to edit</span>
       </div>
       <div class="memnav">
-        <input id="memaddr" value="0x4000" title="Start address">
+        <input id="memaddr" value="0x4000" title="Start address" aria-label="Memory view start address">
         <button class="chip" data-go="text">.text</button>
         <button class="chip" data-go="data">.data</button>
         <button class="chip" data-go="sp">sp</button>
@@ -362,17 +376,27 @@ let asmText = '';
 let asmResult = null;        // {words, dataBytes, symbols, ...}
 let pcToAsmLine = new Map(); // pc -> 1-based asm source line
 let lineToPC = new Map();    // first pc emitted by an asm line
-let breakpoints = new Set();
+let bpLines = new Set();     // breakpointed asm listing lines (survive rebuilds)
+let bpPCs = new Set();       // derived pc set for the current build
 let runTimer = null;
 let buildTimer = null;
 let memBase = DATA_BASE;
 const MEM_ROWS = 24;
 
 cpu.onPrint = s => logOut(s);
-cpu.onReadInt = () => {
-  const v = window.prompt('read_int(): enter an integer');
-  return v === null ? 0 : (parseInt(v, 10) | 0);
+
+// ---------------- saved state (localStorage) ----------------
+const store = {
+  get(k){ try { return localStorage.getItem('rv32.' + k); } catch (e){ return null; } },
+  set(k, v){ try { localStorage.setItem('rv32.' + k, v); } catch (e){} },
 };
+let suppressSave = false;    // true while booting from a shared link
+function saveSrc(){
+  if (suppressSave) return;
+  store.set('csrc', els.csrc.value);
+  store.set('asm', els.asmedit.value);
+  store.set('asmEdited', asmEdited ? '1' : '0');
+}
 
 // ---------------- C syntax highlighting ----------------
 const C_TOKEN_RE = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?)|(\b0[xX][0-9a-fA-F]+\b|\b\d+\b)|\b(int|char|void)\b|\b(if|else|while|for|return|break|continue|sizeof)\b|\b(print_int|print_str|print_char|read_int|exit)\b/g;
@@ -388,10 +412,13 @@ function highlightC(src){
   });
   return out + escHtml(src.slice(last));
 }
+// The overlay/gutter mirrors are driven by transforms rather than by copying
+// scrollTop/scrollLeft: a mirror without scrollbars has a smaller maximum
+// scroll offset than the textarea (whose scrollbars consume client area), so
+// copied scroll positions clamp near the edges and the mirrors drift out of
+// alignment. Transforms have no such limit.
 function syncCHL(){
-  const p = $('chl');
-  p.scrollTop = els.csrc.scrollTop;
-  p.scrollLeft = els.csrc.scrollLeft;
+  $('chlcode').style.transform = `translate(${-els.csrc.scrollLeft}px, ${-els.csrc.scrollTop}px)`;
 }
 function renderCHL(){
   // trailing newline keeps the overlay's scroll extent >= the textarea's
@@ -427,6 +454,7 @@ function setStatus(state, text){
 }
 function refreshStatus(){
   if (!asmResult){ setStatus('', 'NO PROGRAM'); return; }
+  if (cpu.waitingInput){ setStatus('waiting', 'WAITING · read_int'); return; }
   if (runTimer){ setStatus('running', 'RUNNING'); return; }
   if (cpu.halted){
     if (cpu.haltReason === 'exit') setStatus('halted', 'HALTED · exit ' + cpu.exitCode);
@@ -457,10 +485,10 @@ function highlightAsm(src){
   return out + escHtml(src.slice(last));
 }
 function syncAsmScroll(){
-  const p = $('ahl');
-  p.scrollTop = els.asmedit.scrollTop;
-  p.scrollLeft = els.asmedit.scrollLeft;
-  els.asmgut.scrollTop = els.asmedit.scrollTop;
+  const t = `translate(${-els.asmedit.scrollLeft}px, ${-els.asmedit.scrollTop}px)`;
+  $('ahlcode').style.transform = t;
+  $('asmcur').style.transform = t;
+  els.asmgutin.style.transform = `translateY(${-els.asmedit.scrollTop}px)`;
 }
 function renderAHL(){
   $('ahlcode').innerHTML = highlightAsm(els.asmedit.value) + '\n';
@@ -472,26 +500,39 @@ function setAsmSource(text){
 }
 els.asmedit.addEventListener('scroll', syncAsmScroll);
 
+function rebuildBpPCs(){
+  bpPCs = new Set();
+  for (const l of bpLines){
+    const pc = lineToPC.get(l);
+    if (pc !== undefined) bpPCs.add(pc);
+  }
+}
+let buildN = 0;      // bumped per build: addresses in the gutter only change with a build
+let gutterSig = '';
 function renderAsm(){
   const lines = els.asmedit.value.split('\n');
   const curLine = pcToAsmLine.has(cpu.pc) ? pcToAsmLine.get(cpu.pc) : -1;
-  const frag = document.createDocumentFragment();
-  for (let i = 0; i < lines.length; i++){
-    const n = i + 1;
-    const g = document.createElement('div');
-    g.className = 'gl' + (n === curLine ? ' cur' : '');
-    const pc = lineToPC.get(n);
-    if (pc !== undefined){
-      g.textContent = pc.toString(16).padStart(4, '0');
-      g.classList.add('haspc');
-      if (breakpoints.has(pc)) g.classList.add('bp');
-      g.title = 'Toggle breakpoint at 0x' + pc.toString(16);
-      g.onclick = () => { breakpoints.has(pc) ? breakpoints.delete(pc) : breakpoints.add(pc); renderAsm(); };
+  const sig = `${buildN}|${lines.length}|${curLine}|${[...bpLines].join(',')}`;
+  if (sig !== gutterSig){
+    gutterSig = sig;
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < lines.length; i++){
+      const n = i + 1;
+      const g = document.createElement('div');
+      g.className = 'gl' + (n === curLine ? ' cur' : '');
+      const pc = lineToPC.get(n);
+      if (pc !== undefined){
+        g.textContent = pc.toString(16).padStart(4, '0');
+        g.classList.add('haspc');
+        if (bpLines.has(n)) g.classList.add('bp');
+        g.title = 'Toggle breakpoint at 0x' + pc.toString(16);
+        g.onclick = () => { bpLines.has(n) ? bpLines.delete(n) : bpLines.add(n); rebuildBpPCs(); renderAsm(); };
+      }
+      frag.appendChild(g);
     }
-    frag.appendChild(g);
+    els.asmgutin.innerHTML = '';
+    els.asmgutin.appendChild(frag);
   }
-  els.asmgutin.innerHTML = '';
-  els.asmgutin.appendChild(frag);
   const bar = $('asmcur');
   if (curLine > 0){
     const top = ASM_PAD + (curLine - 1) * ASM_LH;
@@ -563,12 +604,19 @@ function editValue(span, cur, commit){
 }
 
 // ---------------- memory ----------------
+let memSig = '';
 function renderMem(){
   const written = new Set();
   for (const [a, len] of cpu.lastWrites) for (let k = 0; k < len; k++) written.add(a + k);
   const sp = cpu.regs[2] >>> 0;
-  const frag = document.createDocumentFragment();
   const base = Math.min(Math.max(0, memBase & ~0xF), MEM_SIZE - 16);
+  // skip the DOM rebuild when nothing in the visible window changed
+  const end = Math.min(base + MEM_ROWS * 16, MEM_SIZE);
+  let sig = base + '|' + sp;
+  for (let a = base; a < end; a++) sig += ',' + cpu.mem[a] + (written.has(a) ? 'w' : '');
+  if (sig === memSig) return;
+  memSig = sig;
+  const frag = document.createDocumentFragment();
   for (let r = 0; r < MEM_ROWS; r++){
     const rowAddr = base + r * 16;
     if (rowAddr >= MEM_SIZE) break;
@@ -610,6 +658,7 @@ function editByte(cell, addr){
   inp.focus(); inp.select();
   const done = ok => {
     if (ok && /^[0-9a-fA-F]{1,2}$/.test(inp.value.trim())) cpu.mem[addr] = parseInt(inp.value.trim(), 16);
+    memSig = '';        // the input element replaced a cell; force the rebuild
     renderMem();
   };
   inp.onblur = () => done(true);
@@ -664,7 +713,8 @@ function renderAll(){ renderRegs(); renderMem(); renderAsm(); refreshStatus(); i
 // ---------------- build / load ----------------
 function build(fromAsmText){
   stopRun();
-  breakpoints.clear();   // addresses shift between builds
+  clearReadIntInput();
+  buildN++;
   try {
     if (fromAsmText === undefined){
       asmText = compileC(els.csrc.value);
@@ -674,6 +724,7 @@ function build(fromAsmText){
     asmResult = assemble(asmText, curISA);
     cpu.loadProgram(asmResult);
     buildLineMaps();
+    rebuildBpPCs();      // breakpoints stick to listing lines across rebuilds
     setAsmSource(asmText);
     if (fromAsmText === undefined) asmEdited = false;
     prevRegs.fill(0);
@@ -682,21 +733,58 @@ function build(fromAsmText){
     if (!e.isCompile && !e.isAsm) throw e;
     asmResult = null;
     buildLineMaps();
+    rebuildBpPCs();
     const where = e.cline ? ` (C line ${e.cline})` : e.aline ? ` (asm line ${e.aline})` : '';
     logLine(`build error: ${e.message}${where}`, 'err');
-    if (fromAsmText === undefined) setAsmSource('');   // stale compiler output; asm edits are kept
+    // C build: clear the stale compiler output. Asm build: show the source that
+    // failed (a no-op while typing, but samples/links land in the editor too).
+    setAsmSource(fromAsmText === undefined ? '' : fromAsmText);
     renderAsm();
     setStatus('fault', 'BUILD ERROR');
+    saveSrc();
     return false;
   }
   renderAll();
+  saveSrc();
   return true;
+}
+
+// ---------------- console input (read_int) ----------------
+let conInputRow = null;
+function clearReadIntInput(){
+  if (conInputRow){ conInputRow.remove(); conInputRow = null; }
+}
+function showReadIntInput(resumeAfter){
+  stopRun();
+  clearReadIntInput();
+  outSpan = null;
+  const row = document.createElement('div');
+  row.className = 'conin';
+  const lab = document.createElement('span');
+  lab.textContent = 'read_int() ▸';
+  const inp = document.createElement('input');
+  inp.setAttribute('aria-label', 'Integer for read_int');
+  row.appendChild(lab); row.appendChild(inp);
+  els.consoleEl.appendChild(row);
+  els.consoleEl.parentElement.scrollTop = els.consoleEl.parentElement.scrollHeight;
+  conInputRow = row;
+  inp.focus();
+  inp.onkeydown = e => {
+    if (e.key !== 'Enter') return;
+    const v = parseInt(inp.value.trim(), 10) | 0;
+    clearReadIntInput();
+    logLine(`read_int() → ${v}`, 'sys');
+    cpu.provideInput(v);
+    if (resumeAfter && !cpu.halted) startRun(); else renderAll();
+  };
+  refreshStatus();
 }
 
 // ---------------- execution ----------------
 function stepOnce(){
   if (!asmResult || cpu.halted) return;
   cpu.step();
+  if (cpu.waitingInput && !conInputRow) showReadIntInput(false);
   if (cpu.halted && cpu.haltReason !== 'exit') logLine(cpu.haltReason, 'err');
   else if (cpu.halted) logLine(`— program exited with code ${cpu.exitCode} after ${cpu.instret.toLocaleString()} instructions —`, 'sys');
 }
@@ -706,16 +794,21 @@ function stopRun(){
 }
 function startRun(){
   if (!asmResult || cpu.halted) return;
+  if (cpu.waitingInput){
+    if (conInputRow) conInputRow.querySelector('input').focus();
+    return;
+  }
   const rate = +$('speed').value;
   stopRun();
   if (rate >= 100000){
     const tick = () => {
       let n = 0;
-      while (!cpu.halted && n++ < 400000){
+      while (!cpu.halted && !cpu.waitingInput && n++ < 400000){
         cpu.step();
-        if (breakpoints.has(cpu.pc)){ logLine(`breakpoint at 0x${cpu.pc.toString(16)}`, 'sys'); stopAndRender(); return; }
+        if (bpPCs.has(cpu.pc)){ logLine(`breakpoint at 0x${cpu.pc.toString(16)}`, 'sys'); stopAndRender(); return; }
       }
       renderAll();
+      if (cpu.waitingInput){ showReadIntInput(true); return; }
       if (cpu.halted){ finishRun(); return; }
       runTimer.raf = requestAnimationFrame(tick);
     };
@@ -724,11 +817,12 @@ function startRun(){
     const period = Math.max(8, 1000 / Math.min(rate, 120));
     const per = Math.max(1, Math.round(rate * period / 1000));
     runTimer = setInterval(() => {
-      for (let i = 0; i < per && !cpu.halted; i++){
+      for (let i = 0; i < per && !cpu.halted && !cpu.waitingInput; i++){
         cpu.step();
-        if (breakpoints.has(cpu.pc)){ logLine(`breakpoint at 0x${cpu.pc.toString(16)}`, 'sys'); stopAndRender(); return; }
+        if (bpPCs.has(cpu.pc)){ logLine(`breakpoint at 0x${cpu.pc.toString(16)}`, 'sys'); stopAndRender(); return; }
       }
       renderAll();
+      if (cpu.waitingInput){ showReadIntInput(true); return; }
       if (cpu.halted) finishRun();
     }, period);
   }
@@ -746,19 +840,65 @@ $('btnStep').onclick = () => { stopRun(); stepOnce(); renderAll(); };
 $('btnRun').onclick = () => { runTimer ? stopAndRender() : startRun(); };
 $('btnReset').onclick = () => {
   stopRun();
+  clearReadIntInput();
   if (asmResult){ cpu.loadProgram(asmResult); prevRegs.fill(0); logLine('machine reset', 'sys'); renderAll(); }
 };
 $('btnBuild').onclick = () => build();
 
 // ---------------- ISA selection ----------------
-$('isa').onchange = () => {
-  curISA = $('isa').value;
+function applyISA(isa){
+  curISA = isa;
+  $('isa').value = isa;
   cpu.isaM = curISA.includes('M');
   cpu.isaA = curISA.includes('A');
   $('isafoot').textContent = 'RV32' + curISA;
+}
+$('isa').onchange = () => {
+  applyISA($('isa').value);
+  store.set('isa', curISA);
   logLine(`ISA set to RV32${curISA}`, 'sys');
   // re-assemble whatever is currently loaded (preserves assembly edits)
   if (asmText) build(asmText); else build();
+};
+$('speed').addEventListener('change', () => store.set('speed', $('speed').value));
+
+// ---------------- share links ----------------
+async function encodeShare(str){
+  const bytes = new TextEncoder().encode(str);
+  let payload = bytes, tag = 'r';
+  try {
+    const cs = new CompressionStream('deflate-raw');
+    const buf = await new Response(new Blob([bytes]).stream().pipeThrough(cs)).arrayBuffer();
+    if (buf.byteLength < bytes.length){ payload = new Uint8Array(buf); tag = 'd'; }
+  } catch (e){}
+  let s = '';
+  payload.forEach(b => { s += String.fromCharCode(b); });
+  return tag + btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function decodeShare(enc){
+  const bytes = Uint8Array.from(atob(enc.slice(1).replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+  if (enc[0] === 'r') return new TextDecoder().decode(bytes);
+  const ds = new DecompressionStream('deflate-raw');
+  const buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+  return new TextDecoder().decode(buf);
+}
+// a share hash pins the page to that program on reload; drop it once the user
+// moves on so their local (auto-saved) state takes over again
+function clearShareHash(){
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+}
+$('btnShare').onclick = async () => {
+  const kind = asmEdited ? 'asm' : 'c';
+  const src = asmEdited ? els.asmedit.value : els.csrc.value;
+  const hash = '#' + kind + '=' + await encodeShare(src);
+  history.replaceState(null, '', hash);
+  const url = location.href;
+  try {
+    await navigator.clipboard.writeText(url);
+    logLine('share link copied to the clipboard', 'ok');
+  } catch (e){
+    logLine('share link (copy it from the address bar): ' + url, 'sys');
+  }
 };
 
 // ---------------- asm editing ----------------
@@ -766,6 +906,9 @@ let asmEditTimer = null;
 let asmEdited = false;   // edits since the last successful C build
 els.asmedit.addEventListener('input', () => {
   renderAHL();
+  els.samples.value = '';
+  store.set('sample', '');
+  clearShareHash();
   if (!asmEdited){
     asmEdited = true;
     logLine('note: rebuilding from C (typing in the C panel or Build) replaces assembly edits', 'sys');
@@ -790,6 +933,9 @@ els.asmgut.addEventListener('wheel', e => {   // scrolling over the gutter scrol
 // ---------------- editor behaviour ----------------
 els.csrc.addEventListener('input', () => {
   renderCHL();
+  els.samples.value = '';
+  store.set('sample', '');
+  clearShareHash();
   clearTimeout(buildTimer);
   buildTimer = setTimeout(() => build(), 600);
 });
@@ -1128,6 +1274,11 @@ done:
 counter: .word 0
 `},
 };
+{
+  const custom = document.createElement('option');
+  custom.value = ''; custom.textContent = '— your code —';
+  els.samples.appendChild(custom);
+}
 for (const name of Object.keys(SAMPLES)){
   const o = document.createElement('option');
   o.value = name; o.textContent = name;
@@ -1135,19 +1286,82 @@ for (const name of Object.keys(SAMPLES)){
 }
 els.samples.onchange = () => {
   const s = SAMPLES[els.samples.value];
+  if (s === undefined) return;                    // '— your code —' is a state, not a sample
+  clearShareHash();
+  bpLines.clear();                                // a different program: line breakpoints are meaningless
+  store.set('sample', els.samples.value);
   if (typeof s === 'string'){
     setCSource(s);
+    asmEdited = false;
     build();
   } else {
-    if (build(s.asm)) logLine('assembly sample loaded — typing in the C panel will rebuild from C and replace it', 'sys');
+    if (build(s.asm)){
+      asmEdited = true;
+      saveSrc();
+      logLine('assembly sample loaded — typing in the C panel will rebuild from C and replace it', 'sys');
+    }
   }
 };
 
 // ---------------- boot ----------------
-els.samples.value = 'Display: RGB332 colour gradient';
-setCSource(SAMPLES['Display: RGB332 colour gradient']);
-logLine('RV32 Workbench — C is compiled and loaded as you type. Step or Run to execute.', 'sys');
-build();
+function loadSample(name){
+  els.samples.value = name;
+  store.set('sample', name);
+  setCSource(SAMPLES[name]);
+  build();
+}
+async function boot(){
+  logLine('RV32 Workbench — C is compiled and loaded as you type. Step or Run to execute.', 'sys');
+  const isa = store.get('isa');
+  if (isa && ['I', 'IM', 'IMA'].includes(isa)) applyISA(isa);
+  const speed = store.get('speed');
+  if (speed && [...$('speed').options].some(o => o.value === speed)) $('speed').value = speed;
+
+  const m = location.hash.match(/^#(c|asm)=(.+)$/);
+  if (m){
+    try {
+      const src = await decodeShare(m[2]);
+      suppressSave = true;   // don't let a shared link overwrite locally saved work
+      els.samples.value = '';
+      if (m[1] === 'c'){
+        setCSource(src);
+        build();
+      } else {
+        setCSource('');
+        if (build(src)) asmEdited = true;
+      }
+      suppressSave = false;
+      logLine('loaded the program from the shared link', 'sys');
+      return;
+    } catch (e){
+      logLine('could not decode the shared link — falling back', 'err');
+    }
+  }
+
+  const sample = store.get('sample');
+  if (sample && SAMPLES[sample] !== undefined){    // last session was an untouched sample
+    const s = SAMPLES[sample];
+    els.samples.value = sample;
+    if (typeof s === 'string'){ setCSource(s); build(); }
+    else { setCSource(''); if (build(s.asm)) asmEdited = true; }
+    return;
+  }
+  const savedC = store.get('csrc');
+  if (savedC !== null){
+    els.samples.value = '';
+    setCSource(savedC);
+    const savedAsm = store.get('asm');
+    if (store.get('asmEdited') === '1' && savedAsm){
+      if (build(savedAsm)) asmEdited = true;
+    } else {
+      build();
+    }
+    logLine('restored your last session — pick a sample to start fresh', 'sys');
+    return;
+  }
+  loadSample('Display: RGB332 colour gradient');
+}
+boot();
 </script>
 </body>
 </html>
