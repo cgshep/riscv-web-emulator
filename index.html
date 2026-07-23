@@ -199,6 +199,9 @@ footer span b{color:var(--dim);font-weight:500}
       <option value="IMA" selected>RV32IMA</option>
     </select>
     <select id="speed" title="Run speed">
+      <option value="1">1 instr/s</option>
+      <option value="2">2 instr/s</option>
+      <option value="4">4 instr/s</option>
       <option value="8">8 instr/s</option>
       <option value="60">60 instr/s</option>
       <option value="3000" selected>3 k instr/s</option>
@@ -2105,6 +2108,12 @@ document.addEventListener('keydown', e => {
 
 // ---------------- samples ----------------
 const SAMPLES = {
+'Blank project': `// Blank project -- write your C program here.
+
+int main(){
+    return 0;
+}
+`,
 'Display: RGB332 colour gradient': `// The DISPLAY panel is a 64x64 memory-mapped screen.
 // One byte per pixel in RGB332 format:  bits  RRR GGG BB.
 //   framebuffer base   0x10000   (write a colour byte per pixel)
@@ -2431,6 +2440,7 @@ els.samples.onchange = () => {
 };
 
 // ---------------- boot ----------------
+els.samples.value = 'Display: RGB332 colour gradient';
 setCSource(SAMPLES['Display: RGB332 colour gradient']);
 logLine('RV32 Workbench — C is compiled and loaded as you type. Step or Run to execute.', 'sys');
 build();
