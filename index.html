@@ -8,11 +8,36 @@
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
+  color-scheme:dark;
   --bg:#14181f; --panel:#1a202a; --panel2:#161c25; --line:#2a3342; --line2:#222b38;
   --text:#c9d2de; --dim:#67738a; --faint:#465063;
   --amber:#f0b454; --amber-dim:#9a7434; --cyan:#62cfdd; --red:#e2685c; --green:#84c98a; --violet:#b48ee0;
+  --regtok:#8fb5c9;
+  --sel:rgba(98,207,221,.28); --curline:rgba(98,207,221,.10); --flash:rgba(240,180,84,.30);
+  --glow-val:rgba(240,180,84,.28); --glow-val2:rgba(240,180,84,.18); --glow-pc:rgba(98,207,221,.3);
+  --disp-bg:#05070a; --screen-glow:rgba(98,207,221,.07);
   --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
   --disp:'Chakra Petch','IBM Plex Mono',sans-serif;
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg:#f4f5f8; --panel:#ffffff; --panel2:#eaecf1; --line:#c9d0dc; --line2:#dde1e9;
+  --text:#2a3342; --dim:#66718a; --faint:#98a2b4;
+  --amber:#a06d10; --amber-dim:#b8934a; --cyan:#0d7c90; --red:#bf3a2e; --green:#2c7f3e; --violet:#7647b8;
+  --regtok:#3f7089;
+  --sel:rgba(13,124,144,.20); --curline:rgba(13,124,144,.08); --flash:rgba(160,109,16,.22);
+  --glow-val:transparent; --glow-val2:transparent; --glow-pc:transparent;
+  --disp-bg:#dfe3ea; --screen-glow:rgba(13,124,144,.10);
+}
+:root[data-theme="durham"]{
+  color-scheme:dark;
+  --bg:#1c1123; --panel:#271833; --panel2:#21142d; --line:#3e2a50; --line2:#342144;
+  --text:#e5dbec; --dim:#a089b2; --faint:#6e5a80;
+  --amber:#e8c25a; --amber-dim:#96793a; --cyan:#d8a7e0; --red:#ea7a6e; --green:#8fd096; --violet:#c9a2f0;
+  --regtok:#c0a4cf;
+  --sel:rgba(216,167,224,.28); --curline:rgba(216,167,224,.10); --flash:rgba(232,194,90,.30);
+  --glow-val:rgba(232,194,90,.28); --glow-val2:rgba(232,194,90,.18); --glow-pc:rgba(216,167,224,.3);
+  --disp-bg:#120a18; --screen-glow:rgba(216,167,224,.08);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -76,7 +101,7 @@ main{
 #chl{overflow:hidden;pointer-events:none;color:var(--text)}
 #chl code{font:inherit}
 #csrc{resize:none;color:transparent;caret-color:var(--text);overflow:auto}
-#csrc::selection{background:rgba(98,207,221,.28)}
+#csrc::selection{background:var(--sel)}
 #csrc::placeholder{color:var(--faint)}
 .tok-c{color:var(--faint);font-style:italic}
 .tok-s{color:var(--green)}
@@ -108,9 +133,9 @@ main{
 #ahl code{font:inherit}
 #ahl .lbl{color:var(--cyan)}
 #asmedit{resize:none;color:transparent;caret-color:var(--text);overflow:auto}
-#asmedit::selection{background:rgba(98,207,221,.28)}
-#asmcur{position:absolute;left:0;height:18px;min-width:100%;background:rgba(98,207,221,.10);display:none}
-.tok-reg{color:#8fb5c9}
+#asmedit::selection{background:var(--sel)}
+#asmcur{position:absolute;left:0;height:18px;min-width:100%;background:var(--curline);display:none}
+.tok-reg{color:var(--regtok)}
 /* ---------- registers: the readout ---------- */
 #regs{
   display:grid;grid-template-columns:repeat(2,1fr);gap:0;padding:8px 10px;
@@ -121,19 +146,19 @@ main{
 .reg .rn{width:38px;flex:none;color:var(--dim);font-size:11px;text-align:right}
 .reg .rv{
   font-weight:500;color:var(--amber);letter-spacing:.04em;cursor:text;
-  text-shadow:0 0 7px rgba(240,180,84,.28);
+  text-shadow:0 0 7px var(--glow-val);
 }
 .reg .rv.zero{color:var(--amber-dim);text-shadow:none}
 .reg .rd{font-size:10px;color:var(--faint);margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:72px}
 .reg.changed{animation:regflash .55s ease-out}
-@keyframes regflash{0%{background:rgba(240,180,84,.30)}100%{background:transparent}}
+@keyframes regflash{0%{background:var(--flash)}100%{background:transparent}}
 .reg input,.mem-edit{
   font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--amber);
   border:1px solid var(--amber-dim);border-radius:2px;width:90px;padding:0 3px;
 }
 .pcrow{display:flex;align-items:baseline;gap:10px;padding:6px 16px;border-bottom:1px solid var(--line2);background:var(--panel2)}
 .pcrow .rn{color:var(--dim);font-family:var(--disp);font-size:11px;letter-spacing:.15em}
-.pcrow .rv{color:var(--cyan);font-weight:600;cursor:text;text-shadow:0 0 7px rgba(98,207,221,.3)}
+.pcrow .rv{color:var(--cyan);font-weight:600;cursor:text;text-shadow:0 0 7px var(--glow-pc)}
 .pcrow .rd{font-size:10.5px;color:var(--faint)}
 /* ---------- memory ---------- */
 .memnav{display:flex;gap:6px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--line2);flex-wrap:wrap;background:var(--panel2)}
@@ -147,7 +172,7 @@ main{
 .mrow{display:flex}
 .mrow .ma{color:var(--faint);width:58px;flex:none}
 .mrow .mb{display:flex}
-.mb span{cursor:text;padding:0 1px;color:var(--amber);text-shadow:0 0 6px rgba(240,180,84,.18)}
+.mb span{cursor:text;padding:0 1px;color:var(--amber);text-shadow:0 0 6px var(--glow-val2)}
 .mb span.zb{color:var(--faint);text-shadow:none}
 .mb span.g8{margin-left:7px}
 .mb span.written{animation:regflash .55s ease-out;color:var(--amber)}
@@ -158,11 +183,11 @@ main{
   .led.running{animation:none}
 }
 /* ---------- virtual display ---------- */
-.dispbody{display:flex;align-items:center;justify-content:center;background:#05070a;padding:10px;min-height:0;overflow:hidden}
+.dispbody{display:flex;align-items:center;justify-content:center;background:var(--disp-bg);padding:10px;min-height:0;overflow:hidden}
 #screen{
   image-rendering:pixelated;image-rendering:crisp-edges;
   width:100%;height:100%;object-fit:contain;background:#000;
-  box-shadow:0 0 18px rgba(98,207,221,.07);
+  box-shadow:0 0 18px var(--screen-glow);
 }
 /* ---------- responsive ---------- */
 @media (max-width:1080px){
@@ -206,6 +231,11 @@ footer span b{color:var(--dim);font-weight:500}
       <option value="60">60 instr/s</option>
       <option value="3000" selected>3 k instr/s</option>
       <option value="2000000">Full speed</option>
+    </select>
+    <select id="theme" title="Colour theme">
+      <option value="dark">Dark</option>
+      <option value="light">Light</option>
+      <option value="durham">Durham</option>
     </select>
   </div>
 </header>
@@ -1644,6 +1674,24 @@ class CPU {
 // UI
 // ============================================================
 const $ = id => document.getElementById(id);
+
+// ---------------- colour theme ----------------
+const THEMES = ['dark', 'light', 'durham'];
+function applyTheme(t){
+  if (!THEMES.includes(t)) t = 'dark';
+  document.documentElement.dataset.theme = t;
+  $('theme').value = t;
+  try { localStorage.setItem('rv32.theme', t); } catch (e){}
+}
+$('theme').onchange = () => applyTheme($('theme').value);
+applyTheme((() => {
+  try {
+    const saved = localStorage.getItem('rv32.theme');
+    if (saved) return saved;
+  } catch (e){}
+  return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+})());
+
 const els = {
   csrc: $('csrc'), consoleEl: $('console'), asmedit: $('asmedit'),
   asmgut: $('asmgut'), asmgutin: $('asmgutin'),
