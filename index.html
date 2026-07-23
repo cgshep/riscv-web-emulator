@@ -359,7 +359,7 @@ applyTheme((() => {
     const saved = localStorage.getItem('rv32.theme');
     if (saved) return saved;
   } catch (e){}
-  return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  return 'light';
 })());
 
 const els = {
