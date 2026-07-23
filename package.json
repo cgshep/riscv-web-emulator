@@ -1,0 +1,9 @@
+{
+  "name": "riscv-web-emulator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RV32 Workbench: a browser-based C-subset compiler, RV32IMA assembler, and CPU emulator",
+  "scripts": {
+    "test": "node --test"
+  }
+}

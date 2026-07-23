@@ -877,6 +877,7 @@ function assemble(src, isa = 'IMA'){
   let textPC = TEXT_BASE;
   const dataBytes = [];
   let dataPC = DATA_BASE;
+  const wordFixups = [];     // {at, sym, line}: .word operands naming labels, patched after pass 1
 
   // ---------- pass 1: layout ----------
   for (let ln = 0; ln < lines.length; ln++){
@@ -904,9 +905,20 @@ function assemble(src, isa = 'IMA'){
       if (dir === '.word'){
         if (section !== 'data') throw AErr('.word is only allowed in the .data section', ln + 1);
         for (const v of splitOperands(rest)){
-          const x = parseImm(v, ln + 1);
+          let x = 0;
+          if (/^-?(0x[0-9a-fA-F]+|\d+)$/i.test(v)) x = parseImm(v, ln + 1);
+          else wordFixups.push({at: dataBytes.length, sym: v, line: ln + 1});
           dataBytes.push(x & 0xFF, (x >> 8) & 0xFF, (x >> 16) & 0xFF, (x >> 24) & 0xFF);
           dataPC += 4;
+        }
+        continue;
+      }
+      if (dir === '.half'){
+        if (section !== 'data') throw AErr('.half is only allowed in the .data section', ln + 1);
+        for (const v of splitOperands(rest)){
+          const x = parseImm(v, ln + 1);
+          dataBytes.push(x & 0xFF, (x >> 8) & 0xFF);
+          dataPC += 2;
         }
         continue;
       }
@@ -915,11 +927,19 @@ function assemble(src, isa = 'IMA'){
         for (const v of splitOperands(rest)){ dataBytes.push(parseImm(v, ln + 1) & 0xFF); dataPC++; }
         continue;
       }
-      if (dir === '.zero'){
-        if (section !== 'data') throw AErr('.zero is only allowed in the .data section', ln + 1);
+      if (dir === '.zero' || dir === '.space'){
+        if (section !== 'data') throw AErr(`${dir} is only allowed in the .data section`, ln + 1);
         const cnt = parseImm(rest, ln + 1);
         for (let i = 0; i < cnt; i++) dataBytes.push(0);
         dataPC += cnt;
+        continue;
+      }
+      if (dir === '.align'){
+        const n = parseImm(rest, ln + 1);
+        if (n < 0 || n > 12) throw AErr('.align expects an exponent 0..12 (aligns to 2^n bytes)', ln + 1);
+        const a = 1 << n;
+        if (section === 'data'){ while (dataPC % a){ dataBytes.push(0); dataPC++; } }
+        else if (a > 4) throw AErr('.align beyond 4-byte units is not supported in .text', ln + 1);
         continue;
       }
       if (dir === '.asciiz' || dir === '.string'){
@@ -931,7 +951,7 @@ function assemble(src, isa = 'IMA'){
         dataBytes.push(0); dataPC++;
         continue;
       }
-      if (dir === '.globl' || dir === '.global' || dir === '.align') continue;  // tolerated
+      if (dir === '.globl' || dir === '.global') continue;  // tolerated
       throw AErr(`unknown directive '${dir}'`, ln + 1);
     }
 
@@ -956,9 +976,15 @@ function assemble(src, isa = 'IMA'){
   if (textPC > DATA_BASE) throw AErr(`program text is too large (${textPC} bytes; limit ${DATA_BASE})`, 1);
   if (dataPC > MEM_SIZE - 1024) throw AErr('data section is too large', 1);
 
+  for (const f of wordFixups){
+    if (!syms.has(f.sym)) throw AErr(`'${f.sym}' is not a number or a known label`, f.line);
+    const x = syms.get(f.sym);
+    dataBytes[f.at] = x & 0xFF; dataBytes[f.at + 1] = (x >> 8) & 0xFF;
+    dataBytes[f.at + 2] = (x >> 16) & 0xFF; dataBytes[f.at + 3] = (x >> 24) & 0xFF;
+  }
+
   // ---------- pass 2: encode ----------
   const words = [];      // {word, pc, line}
-  function push1(w, it){ words.push({word: w >>> 0, pc: it.pc + words.length * 4 - 0, line: it.line}); }
 
   for (const it of items){
     const {op, ops, line, pc} = it;
@@ -1114,7 +1140,7 @@ class CPU {
     this.exitCode = null;
     this.instret = 0;
     this.onPrint = () => {};
-    this.onReadInt = () => 0;
+    this.waitingInput = false;   // stalled on read_int; resume with provideInput()
     this.lastWrites = [];     // [addr, len] of memory writes in the most recent step
     this.lastRegWrite = -1;
     this.isaM = true; this.isaA = true;
@@ -1129,6 +1155,7 @@ class CPU {
     this.regs.fill(0);
     this.pc = TEXT_BASE;
     this.halted = false; this.haltReason = ''; this.exitCode = null; this.instret = 0;
+    this.waitingInput = false;
     this.lastWrites = []; this.lastRegWrite = -1;
     this.resValid = false; this.resAddr = -1;
     this.disp.fill(0); this.dispDirty = true;
@@ -1174,7 +1201,7 @@ class CPU {
     switch (svc){
       case 1:  this.onPrint(String(a0)); break;
       case 4:  this.onPrint(this.readCStr(a0)); break;
-      case 5:  { const v = this.onReadInt() | 0; this.setReg(10, v); break; }
+      case 5:  this.waitingInput = true; break;   // stall: the ecall retires in provideInput()
       case 11: this.onPrint(String.fromCharCode(a0 & 0xFF)); break;
       case 34: this.onPrint('0x' + (a0 >>> 0).toString(16).padStart(8, '0')); break;
       case 10: this.halted = true; this.haltReason = 'exit'; this.exitCode = 0; break;
@@ -1182,8 +1209,15 @@ class CPU {
       default: this.fault(`unknown ecall service ${svc} (a7) at pc=0x${this.pc.toString(16)}`);
     }
   }
+  provideInput(v){
+    if (!this.waitingInput) return;
+    this.waitingInput = false;
+    this.setReg(10, v | 0);
+    this.pc = (this.pc + 4) >>> 0;
+    this.instret++;
+  }
   step(){
-    if (this.halted) return;
+    if (this.halted || this.waitingInput) return;
     this.lastWrites = []; this.lastRegWrite = -1;
     const pc = this.pc;
     if (pc < 0 || pc + 4 > MEM_SIZE || (pc & 3)){ this.fault(`instruction fetch fault at 0x${(pc>>>0).toString(16)}`); return; }
@@ -1331,7 +1365,7 @@ class CPU {
       case 0x73:
         if (iImm === 1){ this.fault(`ebreak at 0x${pc.toString(16)}`); return; }
         this.ecall();
-        if (this.halted) return;
+        if (this.halted || this.waitingInput) return;   // a waiting ecall retires in provideInput()
         break;
       default:
         this.fault(`illegal instruction 0x${w.toString(16).padStart(8,'0')} at 0x${pc.toString(16)}`);
